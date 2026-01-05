@@ -8,6 +8,7 @@ export const COLORS = {
   border: '#E0E0E0',         // Bordas
   cardBg: '#F5F5F5',         // Fundo de cards
   accent: '#FF6B6B',         // Cor de destaque
+  success: '#2E8B57',        // Verde para estados de sucesso
 };
 
 export const FONTS = {

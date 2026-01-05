@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../../../lib/supabase';
 import { COLORS, SIZES, API_URL } from '../../../lib/constants';
 
 interface Category {
@@ -22,14 +23,39 @@ export default function CategoriesScreen() {
   const router = useRouter();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setAuthToken(data.session?.access_token ?? null);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthToken(session?.access_token ?? null);
+    });
+
+    return () => {
+      listener?.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     fetchCategories();
-  }, []);
+  }, [authToken]);
 
   const fetchCategories = async () => {
     try {
-      const response = await fetch(`${API_URL}/categories/`);
+      const headers: Record<string, string> = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+      const response = await fetch(`${API_URL}/categories/`, { headers });
+
+      if (!response.ok) {
+        const body = await response.text();
+        console.error('Erro ao buscar categorias:', response.status, body);
+        return;
+      }
+
       const data = await response.json();
       setCategories(data);
     } catch (error) {

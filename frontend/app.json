@@ -17,12 +17,20 @@
       "bundleIdentifier": "com.souschef.digital"
     },
     "android": {
+        "permissions": ["RECORD_AUDIO"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.souschef.digital"
     },
+      "ios": {
+        "infoPlist": {
+          "NSMicrophoneUsageDescription": "Precisamos do microfone para você falar suas solicitações ao assistente de receitas."
+        },
+        "supportsTablet": true,
+        "bundleIdentifier": "com.souschef.digital"
+      },
     "web": {
       "favicon": "./assets/favicon.png"
     },

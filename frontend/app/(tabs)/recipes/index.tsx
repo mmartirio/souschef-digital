@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../../../lib/supabase';
 import { COLORS, SIZES, API_URL } from '../../../lib/constants';
 
 interface Recipe {
@@ -30,6 +31,21 @@ export default function RecipesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<string>('all');
+  const [authToken, setAuthToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setAuthToken(data.session?.access_token ?? null);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthToken(session?.access_token ?? null);
+    });
+
+    return () => {
+      listener?.subscription.unsubscribe();
+    };
+  }, []);
 
   const fetchRecipes = async () => {
     try {
@@ -41,7 +57,17 @@ export default function RecipesScreen() {
       
       if (params.length > 0) url += `?${params.join('&')}`;
 
-      const response = await fetch(url);
+      const headers: Record<string, string> = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        const body = await response.text();
+        console.error('Erro ao buscar receitas:', response.status, body);
+        return;
+      }
+
       const data = await response.json();
       setRecipes(data);
     } catch (error) {

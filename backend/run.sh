@@ -48,6 +48,14 @@ if ! command -v python3 &> /dev/null; then
 fi
 print_status "Python3 disponível: $(python3 --version)"
 
+# Verificar ffmpeg (necessário para Whisper)
+if ! command -v ffmpeg &> /dev/null; then
+    print_error "ffmpeg não encontrado (necessário para transcrever áudio)"
+    print_info "Instale com: sudo apt-get install ffmpeg"
+    exit 1
+fi
+print_status "ffmpeg disponível: $(ffmpeg -version | head -n 1)"
+
 # Criar venv se não existir
 if [ ! -d "venv" ]; then
     print_info "Criando ambiente virtual..."

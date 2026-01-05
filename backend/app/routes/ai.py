@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
+from app.routes.auth import get_current_user_optional
 import httpx
 import json
 import tempfile
 import os
+import shutil
 import whisper
 
 from app.database.connection import get_db
@@ -56,48 +58,64 @@ class TranscriptionResponse(BaseModel):
 # Endpoints
 @router.post("/transcribe", response_model=TranscriptionResponse)
 async def transcribe_audio(
-    audio: UploadFile = File(...),
-    current_user: User = Depends(get_current_user)
+    audio: UploadFile = File(None),
+    file: UploadFile = File(None),
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Transcreve áudio para texto usando Whisper.
+
+    Aceita tanto o campo "audio" (backend original) quanto "file" (frontend mobile).
     """
     if not whisper_model:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Serviço de transcrição não disponível. Modelo Whisper não carregado."
         )
-    
+
+    if not shutil.which("ffmpeg"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ffmpeg não instalado. Instale com: sudo apt-get install ffmpeg"
+        )
+
+    incoming_file = audio or file
+    if not incoming_file:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nenhum arquivo de áudio enviado"
+        )
+
     # Validar tipo de arquivo
-    if not audio.content_type or not audio.content_type.startswith("audio/"):
+    if not incoming_file.content_type or not incoming_file.content_type.startswith("audio/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Arquivo deve ser de áudio"
         )
-    
+
     try:
         # Salvar arquivo temporariamente
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
-            content = await audio.read()
+            content = await incoming_file.read()
             temp_file.write(content)
             temp_file_path = temp_file.name
-        
+
         # Transcrever usando Whisper
         result = whisper_model.transcribe(
             temp_file_path,
             language="pt",  # Português
             fp16=False  # Compatibilidade CPU
         )
-        
+
         # Remover arquivo temporário
         os.unlink(temp_file_path)
-        
+
         return TranscriptionResponse(
             text=result["text"].strip(),
             language=result.get("language", "pt"),
             duration=result.get("duration", 0.0)
         )
-        
+
     except Exception as e:
         # Limpar arquivo temporário em caso de erro
         if 'temp_file_path' in locals():
@@ -105,16 +123,23 @@ async def transcribe_audio(
                 os.unlink(temp_file_path)
             except:
                 pass
-        
+
+        error_msg = str(e)
+        if "ffmpeg" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="ffmpeg não disponível para decodificar o áudio. Instale com: sudo apt-get install ffmpeg"
+            )
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao transcrever áudio: {str(e)}"
+            detail=f"Erro ao transcrever áudio: {error_msg}"
         )
 
 @router.post("/generate", response_model=AIResponse)
 async def generate_text(
     request: AIRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Gera texto usando o modelo Ollama.
@@ -150,7 +175,7 @@ async def generate_text(
 @router.post("/chat", response_model=AIResponse)
 async def chat(
     request: ChatRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Mantém uma conversa com o modelo de IA.

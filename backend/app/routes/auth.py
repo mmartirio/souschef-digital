@@ -17,6 +17,8 @@ from app.utils.helpers import validate_email
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+# Versão opcional (não gera 401 automática quando o header não existe)
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
 # Modelos Pydantic para validação
 from pydantic import BaseModel, EmailStr
@@ -87,6 +89,16 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     
     return user
+
+
+def get_current_user_optional(token: str = Depends(oauth2_scheme_optional), db: Session = Depends(get_db)):
+    """Retorna usuário se token válido, ou None se não houver token."""
+    if not token:
+        return None
+    try:
+        return get_current_user(token, db)
+    except HTTPException:
+        return None
 
 # Endpoints
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
