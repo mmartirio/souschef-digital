@@ -1,0 +1,94 @@
+# Project structure
+
+## Root
+- README.md — project overview
+- app.config.js, package-lock.json, package.json — frontend tooling config
+- docker-compose.yml — service orchestration
+- init-project.sh — helper script to bootstrap env
+- schema.sql — database schema
+- get-pip.py — pip installer helper
+- backend/ — Python API service
+- frontend/ — mobile/web client (Expo/React)
+
+## Backend (backend/)
+- Dockerfile — container image for API
+- requirements.txt — Python dependencies
+- app/
+  - __init__.py
+  - main.py — application entrypoint
+  - database/
+    - __init__.py
+    - connection.py — database connection helper
+  - middleware/
+    - __init__.py
+    - auth.py — auth middleware
+    - tenant.py — tenant handling middleware
+  - models/
+    - __init__.py
+    - ai.py — AI related models
+    - recipe.py — recipe models
+    - user.py — user models
+  - routes/
+    - __init__.py
+    - ai.py — AI endpoints
+    - auth.py — auth endpoints
+    - categories.py — category endpoints
+    - recipes.py — recipe endpoints
+    - users.py — user endpoints
+  - services/
+    - __init__.py
+    - ollama_service.py — AI/LLM integration helpers
+    - supabase_service.py — Supabase integration helpers
+  - utils/
+    - __init__.py
+    - helpers.py — utility helpers
+    - security.py — security helpers
+
+## Frontend (frontend/)
+- app.json — Expo app config
+- tsconfig.json — TypeScript config
+- package.json — frontend dependencies
+- app/
+  - _layout.tsx — root layout
+  - index.tsx — landing/root route
+  - (auth)/
+    - _layout.tsx
+    - login.tsx
+    - register.tsx
+  - (tabs)/
+    - _layout.tsx — tab navigation
+    - index.tsx — tab home
+    - ai-assistant/
+      - index.tsx — AI assistant screen
+    - categories/
+      - index.tsx — categories screen
+    - profile/
+      - index.tsx — profile screen
+    - recipes/
+      - index.tsx — recipes list
+      - create.tsx — create recipe
+      - [id].tsx — recipe detail
+- components/
+  - ai/
+    - AIAssistant.tsx
+    - ChatBubble.tsx
+  - layout/
+    - Header.tsx
+    - TabBar.tsx
+  - recipes/
+    - IngredientItem.tsx
+    - RecipeCard.tsx
+    - RecipeList.tsx
+  - ui/
+    - Button.tsx
+    - Card.tsx
+    - Input.tsx
+    - Loading.tsx
+    - Modal.tsx
+- lib/
+  - api.ts — API client
+  - auth.ts — auth helpers
+  - constants.ts — shared constants
+  - ollama.ts — Ollama client helpers
+  - supabase.ts — Supabase client helpers
+  - types.ts — shared types

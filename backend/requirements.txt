@@ -1,9 +1,34 @@
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-python-dotenv==1.0.1
-supabase==2.9.0
-httpx==0.27.0
-pydantic==2.9.0
+# FastAPI e servidor
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Banco de dados
+sqlalchemy==2.0.23
+alembic==1.12.1
+
+# Autenticação e segurança
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.12
+python-multipart==0.0.6
+
+# Validação e configuração
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# HTTP Client para Ollama
+httpx==0.25.2
+
+# Processamento de áudio
+openai-whisper==20231117
+pydub==0.25.1
+soundfile==0.12.1
+
+# Utilitários
+email-validator==2.1.0
+
+# Opcional - para desenvolvimento
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.12.0
+flake8==6.1.0
