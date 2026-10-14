@@ -67,4 +67,10 @@ Thumbs.db
 
 # generated native folders
 /ios
+frontend/ios
 /android
+frontend/android
+
+# Exemplos de configuração versionados
+!.env.example
+media/

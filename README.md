@@ -1,465 +1,109 @@
-# 🍳 SousChef Digital - Assistente Culinário com IA
+# SousChef Digital
 
-Um aplicativo mobile completo para gerenciamento de receitas com assistente IA integrado. Desenvolvido com **React Native + Expo** no frontend e **FastAPI + Python** no backend.
+App de receitas com assistente culinário por voz. Tudo roda localmente: **React Native (Expo)** no app, **FastAPI + SQLite** no backend, **Ollama** (LLM) e **faster-whisper** (voz → texto).
 
-## ✨ Características
+## Como rodar
 
-### 🔐 Autenticação
-- Login/Registro com email e senha
-- JWT token-based authentication
-- Persistência de sessão
+### Backend (Docker)
 
-### 👨‍🍳 Gerenciamento de Receitas
-- Criar, editar, deletar receitas
-- Visualizar detalhes completos (ingredientes, modo de preparo)
-- Filtros por dificuldade
-- Busca por nome
-- Tempo de preparo e cozimento
-- Indicador de dificuldade (Fácil/Médio/Difícil)
-
-### 🏷️ Categorias
-- Organização de receitas por categoria
-- Visualização de receitas por categoria
-- Contagem de receitas por categoria
-
-### ⭐ Favoritos
-- Marcar/desmarcar receitas como favoritas
-- Listar receitas favoritas
-- Acesso rápido aos favoritos
-
-### 🤖 Assistente IA
-- Chat com Ollama (local AI)
-- Sugestões de receitas
-- Dicas culinárias
-- Adaptação de receitas
-
-### 📱 Interface Mobile
-- Design moderno e intuitivo
-- Navegação por abas (Bottom Tab)
-- Tema claro (Preto e Ouro)
-- Componentes customizados
-
-## 🏗️ Arquitetura
-
-```
-┌─────────────────────┐
-│                     │
-│   Frontend          │
-│  React Native       │
-│  Expo Router        │
-│                     │
-└──────────┬──────────┘
-           │
-      HTTP │ (Axios)
-           │
-┌──────────▼──────────┐
-│                     │
-│   Backend API       │
-│  FastAPI + Python   │
-│  SQLAlchemy ORM     │
-│                     │
-└──────────┬──────────┘
-           │
-      ┌────┼────┐
-      │    │    │
-   ┌──▼──┐ │ ┌──▼──┐
-   │SQLite││ │Ollama│
-   │(Dev) │ │(IA)  │
-   └──────┘ └──────┘
+```bash
+cp backend/.env.example .env        # defina SECRET_KEY e POSTGRES_PASSWORD (valores aleatórios)
+docker compose up -d --build
+docker compose exec ollama ollama pull qwen2.5:1.5b   # só na primeira vez (~1 GB)
+curl localhost:8000/ai/health       # {"ollama":true,"transcription":true,...}
 ```
 
-## 📦 Tecnologias Utilizadas
+Na primeira subida, o modelo e o Whisper são carregados em segundo plano (pode levar alguns minutos em CPU). Depois disso ficam em memória.
 
-### Frontend
-- **React Native** 0.81.5
-- **Expo** 54.0 (Base para deployment)
-- **Expo Router** 4.0 (Navigation)
-- **TypeScript** 5.9
-- **Axios** 1.7 (HTTP Client)
-- **Ionicons** (Icon Library)
-- **AsyncStorage** (Local Storage)
+Documentação da API: http://localhost:8000/docs
 
-### Backend
-- **FastAPI** 0.104.1 (Web Framework)
-- **SQLAlchemy** 2.0.23 (ORM)
-- **Pydantic** 2.5.0 (Data Validation)
-- **PyJWT** (Authentication)
-- **bcrypt** (Password Hashing)
-- **Uvicorn** (ASGI Server)
-- **Ollama** (Local AI)
+### Backend (sem Docker)
 
-### Database
-- **SQLite** (Development)
-- **PostgreSQL** (Production-ready)
-
-## 🚀 Quick Start
-
-### Opção 1: Executar Localmente
-
-#### 1. Backend
 ```bash
 cd backend
-
-# Criar virtual environment
-python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
-# ou
-venv\Scripts\activate     # Windows
-
-# Instalar dependências
-pip install -r requirements.txt
-
-# Executar servidor
-python app/main.py
-
-# Acesso: http://localhost:8000
-# Documentação Swagger: http://localhost:8000/docs
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # Linux/mac: .venv/bin/pip
+.venv/Scripts/uvicorn app.main:app --reload --host 0.0.0.0
+.venv/Scripts/python -m pytest -q tests
 ```
 
-#### 2. Frontend
+### App
+
 ```bash
 cd frontend
-
-# Instalar dependências
+cp .env.example .env     # emulador Android: EXPO_PUBLIC_API_URL=http://10.0.2.2:8000
 npm install
-
-# Opção 1: Expo Go (mais rápido)
-npm start
-# Escanear QR code com Expo Go
-
-# Opção 2: Emulador Android
-npm run android
-
-# Opção 3: Emulador iOS (macOS)
-npm run ios
-
-# Opção 4: Web
-npm run web
+npm run android          # ou: npm start / npm run web
+npm run typecheck
 ```
 
-### Opção 2: Docker Compose
-```bash
-docker-compose up
+Sem `EXPO_PUBLIC_API_URL`, o app usa o IP da máquina que roda o Metro (funciona em celular físico na mesma rede).
 
-# Frontend: http://localhost:3000
-# Backend: http://localhost:8000
-# Swagger: http://localhost:8000/docs
-```
+## Assistente de voz
 
-### Opção 3: Scripts Auxiliares
-```bash
-# Executar frontend com menu interativo
-chmod +x run-frontend.sh
-./run-frontend.sh
+| Onde | O que faz |
+|---|---|
+| Aba **Assistente** | Toque uma vez no microfone e converse: ele ouve → responde falando → volta a ouvir. Silêncio não encerra; diga "tchau" ou toque de novo para parar. Também aceita texto. |
+| **Modo guiado** (detalhe da receita) | Para cada componente (ex.: massa, recheio, cobertura; ou a receita inteira, se tiver um só preparo): anuncia o componente, faz a **mise en place** com os ingredientes dele e cada fase (**preparo, cocção, descanso**). No fim, o **preparo final** (montagem). Pausa após cada item até ouvir *pronto*, *próximo* ou *terminado*. Também: *anterior*, *repetir*, *sair*. Perguntas vão para a IA sem avançar; outras falas são ignoradas. |
+| **Pedido de receita** (Assistente) | "Quero fazer brigadeiro", "como faço bolo Matilda?": diz *"Vou procurar no meu livro de receitas"*, busca e, ao achar, *"Encontrei a receita. Vamos!"* e abre o modo guiado. |
+| Microfone da **home** | Abre o assistente já ouvindo. |
+| Menu ☰ → **Assistente de voz** | Voz Feminina (padrão do sistema) ou Masculina (`pt-br-x-ptd-local`), com prévia. |
 
-# Testar integração entre frontend e backend
-chmod +x test-integration.sh
-./test-integration.sh
-```
+Cada fala termina sozinha após ~1,5 s de silêncio (detecção por nível de áudio), sem precisar apertar nada.
 
-## 📁 Estrutura do Projeto
+Fluxo: `expo-audio` grava → `POST /ai/transcribe` (faster-whisper) → `POST /ai/chat` (Ollama) → `expo-speech` fala a resposta.
 
-```
-souschef-digital/
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI app
-│   │   ├── database/            # Configuração de BD
-│   │   ├── models/              # SQLAlchemy models
-│   │   ├── routes/              # Endpoints (6 módulos)
-│   │   ├── services/            # Business logic
-│   │   ├── middleware/          # Auth, CORS, etc
-│   │   └── utils/               # Helpers & security
-│   ├── requirements.txt         # Dependências
-│   ├── Dockerfile              # Containerização
-│   ├── venv/                   # Virtual environment
-│   └── test_api.py             # Script de teste
-│
-├── frontend/
-│   ├── app/                    # Rotas e telas
-│   │   ├── (auth)/            # Login, Register
-│   │   └── (tabs)/            # 5 abas principales
-│   ├── components/             # Componentes reutilizáveis
-│   ├── lib/                   # Utilitários e API client
-│   ├── package.json           # Dependências
-│   ├── app.json               # Configuração Expo
-│   └── tsconfig.json          # Configuração TypeScript
-│
-├── IMPLEMENTATION_SUMMARY.md  # Resumo técnico detalhado
-├── FRONTEND_SETUP.md          # Guia do frontend
-├── BACKEND_SETUP.md           # Guia do backend
-├── docker-compose.yml         # Orquestração
-├── schema.sql                 # Schema do banco
-├── test-integration.sh        # Teste de integração
-├── run-frontend.sh            # Script de execução
-└── README.md                  # Este arquivo
-```
+### Receitas iniciais
 
-## 🔌 API Endpoints
+~200 receitas populares (nacionais e internacionais) ficam em `backend/app/knowledge/receitas/*.json`, no mesmo formato de `POST /recipes/`. Na inicialização, o backend sincroniza as receitas do autor "SousChef" com esses arquivos (cria as novas e atualiza as alteradas). Para adicionar ou corrigir, edite o JSON e reinicie. Quando a pergunta cita uma receita do app, o agente usa os ingredientes e o modo de preparo dela na resposta.
 
-### Autenticação
-```
-POST   /auth/login        - Fazer login
-POST   /auth/register     - Registrar
-POST   /auth/logout       - Fazer logout
-GET    /auth/me           - Perfil atual
-GET    /health            - Health check
-```
-
-### Receitas
-```
-GET    /recipes           - Listar com filtros
-GET    /recipes/{id}      - Detalhes
-POST   /recipes           - Criar
-PUT    /recipes/{id}      - Editar
-DELETE /recipes/{id}      - Deletar
-```
-
-### Categorias
-```
-GET    /categories        - Listar
-GET    /categories/{id}   - Detalhes
-GET    /categories/{id}/recipes - Receitas da categoria
-```
-
-### Favoritos
-```
-GET    /favorites         - Listar
-POST   /favorites         - Adicionar
-DELETE /favorites/{id}    - Remover
-```
-
-### IA
-```
-POST   /ai/chat          - Chat com Ollama
-GET    /ai/models        - Listar modelos
-GET    /ai/health        - Status Ollama
-```
-
-## 🎨 Design System
-
-### Paleta de Cores
-```
-Primário (Texto):     #000000 (Preto)
-Secundário (Acento):  #D4AF37 (Ouro)
-Background:           #FFFFFF (Branco)
-Secundário (Texto):   #666666 (Cinza)
-```
-
-### Componentes UI
-- **Button**: 3 variantes (Primary, Secondary, Outline)
-- **Input**: Com validação, ícones, feedback
-- **Card**: Container com sombra
-- **Header**: Logo e navegação
-- **TabBar**: Navigation com 5 abas
-
-## 🧪 Testes
-
-### Backend
-```bash
-cd backend
-source venv/bin/activate
-python test_api.py
-```
-
-### Frontend
-```bash
-cd frontend
-npm test  # (Configurar Jest/Testing Library)
-```
-
-### Integração
-```bash
-# Certifique-se que backend está rodando
-./test-integration.sh
-```
-
-## 📊 Fluxo de Dados
+No modo de preparo, linhas `## Título` separam os preparos, que viram etapas no modo guiado:
 
 ```
-User → Frontend (React Native)
-         ↓
-    Validation (Pydantic)
-         ↓
-    Backend (FastAPI)
-         ↓
-    Database (SQLite/PostgreSQL)
-         ↓
-    Response JSON
-         ↓
-    Frontend Display
+## Massa
+1. Bata os ovos...
+## Cobertura
+1. Derreta o chocolate...
 ```
 
-## 🔐 Segurança
+### Ensinar o agente
 
-- ✅ JWT Token-based Authentication
-- ✅ Password hashing com bcrypt
-- ✅ CORS configurado
-- ✅ Input validation (Pydantic)
-- ✅ SQL Injection prevention (SQLAlchemy)
-- ✅ Token expiration (24h)
+O agente usa um modelo pequeno (`qwen2.5:1.5b`, trocável por `OLLAMA_MODEL`) e é "ensinado" por uma base de conhecimento em JSON:
 
-## 📋 Funcionalidades Implementadas
-
-### Backend ✅
-- [x] 40+ endpoints
-- [x] JWT authentication
-- [x] Database models (5)
-- [x] CORS configuration
-- [x] Password hashing
-- [x] Validation
-- [x] Error handling
-- [x] Health checks
-- [x] Ollama integration
-- [x] Swagger documentation
-
-### Frontend ✅
-- [x] 11 telas
-- [x] 5 abas navegação
-- [x] Componentes UI
-- [x] Validação de formulários
-- [x] API client (axios)
-- [x] TypeScript types
-- [x] Design system
-- [x] Auth stack
-- [x] Recipe management
-- [x] Chat interface
-
-## 📋 TODO / Próximos Passos
-
-### Curto Prazo
-- [ ] Implementar persistência de token
-- [ ] Upload de imagens para receitas
-- [ ] Integração Ollama completa
-- [ ] Testes unitários
-- [ ] CI/CD pipeline
-
-### Médio Prazo
-- [ ] Dark mode
-- [ ] Compartilhamento de receitas
-- [ ] Notificações push
-- [ ] Câmera para fotos de receitas
-- [ ] Histórico de pesquisas
-
-### Longo Prazo
-- [ ] Web app (Next.js)
-- [ ] Admin dashboard
-- [ ] Supabase integration (storage)
-- [ ] ML para recomendações
-- [ ] PWA offline
-
-## 🤝 Contribuição
-
-1. Faça um fork do projeto
-2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
-3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
-4. Push para a branch (`git push origin feature/AmazingFeature`)
-5. Abra um Pull Request
-
-## 📚 Documentação Adicional
-
-- [IMPLEMENTATION_SUMMARY.md](./IMPLEMENTATION_SUMMARY.md) - Resumo técnico detalhado
-- [FRONTEND_SETUP.md](./FRONTEND_SETUP.md) - Guia de setup do frontend
-- [BACKEND_SETUP.md](./BACKEND_SETUP.md) - Guia de setup do backend
-- [Swagger API Docs](http://localhost:8000/docs) - Documentação interativa da API
-
-## 🐛 Troubleshooting
-
-### Backend não conecta
-```bash
-# Certifique-se que está na porta correta
-http://localhost:8000
-
-# Se em emulador Android, use:
-http://10.0.2.2:8000
+```
+backend/app/knowledge/*.json
+[{ "topic": "...", "keywords": ["..."], "content": "..." }]
 ```
 
-### Erro ao instalar dependências
-```bash
-# Limpar cache
-npm cache clean --force
-pip cache purge
+A cada pergunta, os itens mais relevantes (por palavras-chave) e as receitas do app com título parecido entram no prompt. Para ensinar algo novo, basta adicionar um item. O arquivo é recarregado automaticamente, sem reiniciar.
 
-# Reinstalar
-npm install
-pip install -r requirements.txt
+## Login com Google
+
+1. No Google Cloud Console, crie IDs de cliente OAuth (Web, Android e/ou iOS).
+2. Backend: `GOOGLE_CLIENT_IDS=<id-web>,<id-android>,...` no `.env`.
+3. App: `EXPO_PUBLIC_GOOGLE_*_CLIENT_ID` no `frontend/.env`.
+
+O app obtém o `id_token` do Google; o backend o valida no Google e emite o JWT do próprio app. Contas com o mesmo email são vinculadas. O botão só aparece quando há client IDs configurados. No Android/iOS nativo é preciso um *development build* (`npx expo run:android`), porque o Expo Go não suporta o redirect do Google.
+
+## Estrutura
+
+```
+backend/app/
+  main.py                 app, CORS, health, warm-up dos modelos
+  schemas.py              contratos da API (espelhados em frontend/lib/types.ts)
+  models/                 SQLAlchemy: User, Recipe, Ingredient, Favorite
+  routes/                 auth, users, recipes, categories, favorites, ai
+  services/               ollama, transcription, knowledge, google_auth
+  knowledge/              base de conhecimento do agente
+frontend/
+  app/                    telas (expo-router): home, (auth), (tabs)
+  components/             ui, layout, recipes, ai
+  hooks/                  useVoiceRecorder, useVoiceAgent, useFavorites
+  lib/                    api, auth (contexto), types, constants, speech
 ```
 
-### Emulador não inicia
-```bash
-# Listar emuladores
-adb devices
+## Endpoints principais
 
-# Se vazio, reinicie Android Studio
-# Em iOS, use: xcrun simctl list devices
-```
-
-## 📞 Suporte
-
-Para dúvidas ou problemas, abra uma issue no repositório.
-
-## 📄 Licença
-
-Este projeto está sob licença MIT. Veja o arquivo LICENSE para detalhes.
-
----
-
-## 🎯 Status do Projeto
-
-**Fase 1**: ✅ Implementação Completa
-- Backend 100% funcional
-- Frontend 100% implementado
-- Pronto para testes
-
-**Fase 2**: 🔄 Testing & Deploy
-- Testes de integração
-- Deploy em produção
-- Otimizações
-
-**Última atualização**: 2024
-**Desenvolvedor**: Seu Nome
-**Email**: seu@email.com
-
----
-
-Desenvolvido com ❤️ usando React Native + FastAPI
-
-   Ou manualmente:
-   
-   **Frontend:**
-   ```bash
-   cd frontend
-   npm start
-   ```
-
-   **Backend:**
-   ```bash
-   cd backend
-   uvicorn app.main:app --reload
-   ```
-
-## 🛠️ Tecnologias
-
-### Frontend
-- React Native
-- Expo Router
-- TypeScript
-- Supabase Client
-
-### Backend
-- FastAPI
-- Python
-- Supabase
-- Ollama
-
-## 📦 Estrutura de Dados
-
-Consulte `schema.sql` para o schema completo do banco de dados.
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas! Sinta-se à vontade para abrir issues e pull requests.
-
-## 📄 Licença
-
-MIT License
+`POST /auth/register` · `POST /auth/login` (form) · `POST /auth/google` · `GET /auth/me`
+`GET|POST /recipes/` · `GET|PUT|DELETE /recipes/{id}` · `GET /recipes/{id}/steps`
+`GET /categories/` · `GET|POST /favorites/` · `GET /favorites/ids` · `DELETE /favorites/{id}`
+`POST /ai/chat` · `POST /ai/transcribe` · `GET /ai/health` · `GET /ai/models`
