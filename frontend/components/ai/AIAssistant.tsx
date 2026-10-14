@@ -40,10 +40,11 @@ export default function AIAssistant({ listenKey }: Props) {
       // Perguntas sem pedido explícito ("qual o segredo do hambúrguer?") vão para a IA.
       if (!explicit && text.trim().endsWith('?')) return false;
 
-      // Pedido explícito avisa que vai procurar; só o nome ("brigadeiro") busca em silêncio.
+      // Pedido explícito: a vinheta "vou procurar" toca antes de qualquer resposta (só falada, fora
+      // do chat) enquanto a busca roda; só o nome ("brigadeiro") busca em silêncio.
       const [search] = await Promise.all([
         aiAPI.findRecipe(text).catch(() => null),
-        explicit ? agent.reply(PHRASES.searchingRecipe) : undefined,
+        explicit ? agent.speak(PHRASES.searchingRecipe) : undefined,
       ]);
       const match = search?.match;
       if (!match && !explicit) return false;
