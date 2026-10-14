@@ -37,7 +37,7 @@ export default function Register() {
   };
 
   return (
-    <AuthScreen title="Criar conta" subtitle="Cadastre-se para descobrir receitas deliciosas">
+    <AuthScreen spoon title="Criar conta" subtitle="Cadastre-se para descobrir receitas deliciosas">
       <Input label="Nome" value={form.name} onChangeText={set('name')} icon="person-outline" />
       <Input label="Email" placeholder="seu@email.com" value={form.email} onChangeText={set('email')} keyboardType="email-address" icon="mail-outline" />
       <Input label="Senha" value={form.password} onChangeText={set('password')} secureTextEntry icon="lock-closed-outline" />

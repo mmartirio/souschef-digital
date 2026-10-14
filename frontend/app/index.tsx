@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -35,9 +35,43 @@ function useTypewriter(text: string, speedMs = 80, repeatMs = 10000) {
   return shown;
 }
 
+/** Flutuação contínua: sobe e desce suavemente (translateY para usar em Animated.View). */
+function useFloat(distance = 6, durationMs = 1500) {
+  const offset = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const move = (toValue: number) =>
+      Animated.timing(offset, { toValue, duration: durationMs, easing: Easing.inOut(Easing.sin), useNativeDriver: true });
+    const loop = Animated.loop(Animated.sequence([move(-distance), move(0)]));
+    loop.start();
+    return () => loop.stop();
+  }, [offset, distance, durationMs]);
+  return offset;
+}
+
+/** Chacoalhar: balança por `shakeMs` e para por `pauseMs` antes de repetir (rotate para Animated). */
+function useShake(shakeMs = 1000, pauseMs = 5000, swingMs = 100, angle = 6) {
+  const swing = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const to = (toValue: number) => Animated.timing(swing, { toValue, duration: swingMs, useNativeDriver: true });
+    const swings = Math.max(2, Math.floor(shakeMs / swingMs) - 1);
+    const loop = Animated.loop(
+      Animated.sequence([
+        ...Array.from({ length: swings }, (_, i) => to(i % 2 ? -1 : 1)),
+        to(0),
+        Animated.delay(pauseMs),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [swing, shakeMs, pauseMs, swingMs]);
+  return [{ rotate: swing.interpolate({ inputRange: [-1, 1], outputRange: [`-${angle}deg`, `${angle}deg`] }) }];
+}
+
 export default function Home() {
   const router = useRouter();
   const title = useTypewriter(TITLE);
+  const float = useFloat();
+  const shake = useShake();
   const { bottom: navBarHeight } = useSafeAreaInsets();
 
   return (
@@ -46,15 +80,17 @@ export default function Home() {
       <Header />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: navBarHeight + ADD_BUTTON_SPACE }}>
         <View style={styles.voiceSection}>
-          <TouchableOpacity
-            style={styles.micButton}
-            onPress={() =>
-              router.push({ pathname: '/ai-assistant', params: { voice: String(Date.now()) } })
-            }
-          >
-            <Ionicons name="mic" size={30} color={COLORS.background} />
-          </TouchableOpacity>
-          <Text style={styles.micHint}>Fale com o SousChef</Text>
+          <Animated.View style={{ transform: [{ translateY: float }, ...shake] }}>
+            <TouchableOpacity
+              style={styles.micButton}
+              onPress={() =>
+                router.push({ pathname: '/ai-assistant', params: { voice: String(Date.now()) } })
+              }
+            >
+              <Ionicons name="mic" size={30} color={COLORS.background} />
+            </TouchableOpacity>
+          </Animated.View>
+          <Text style={styles.micHint}>Clique aqui para falar com o Chef</Text>
 
           <Text style={styles.title}>{title}</Text>
         </View>
