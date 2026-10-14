@@ -2,9 +2,10 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
-    # Só na própria máquina (testes/scripts); o celular acessa pelo HTTPS do Caddy (8443).
+    # Só na própria máquina (testes/scripts); o APK acessa pelo HTTPS do Caddy (8443).
+    # Para o Expo Go na rede local (HTTP), defina BACKEND_BIND=0.0.0.0 no .env.
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${BACKEND_BIND:-127.0.0.1}:8000:8000"
     environment:
       - DATABASE_URL=postgresql+psycopg://souschef:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/souschef
       - MEDIA_DIR=/app/data/media

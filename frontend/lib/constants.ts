@@ -1,4 +1,4 @@
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import type { Difficulty } from './types';
 
 export const COLORS = {
@@ -40,5 +40,7 @@ export const countryLabel = (country: string) => `${COUNTRY_FLAGS[country] ?? '�
 
 // Em desenvolvimento, usa o mesmo host do Metro (funciona em celular físico e emulador).
 const devHost = Constants.expoConfig?.hostUri?.split(':')[0];
+// O Expo Go não confia na CA do Caddy (só o APK a embute): fala HTTP direto com o backend.
+const inExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 export const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? `http://${devHost ?? 'localhost'}:8000`;
+  (!inExpoGo && process.env.EXPO_PUBLIC_API_URL) || `http://${devHost ?? 'localhost'}:8000`;
