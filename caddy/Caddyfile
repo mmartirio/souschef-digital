@@ -1,0 +1,21 @@
+# Proxy HTTPS (TLS) na frente do backend. Certificado emitido pela CA local do Caddy
+# ("tls internal"); o APK confia nessa CA (frontend/certs/souschef-root-ca.crt).
+{
+	skip_install_trust
+	# Clientes que acessam por IP (como o Android) não enviam SNI: usa o certificado do IP.
+	default_sni {$SOUSCHEF_HOST}
+}
+
+https://{$SOUSCHEF_HOST}:8443, https://localhost:8443 {
+	tls internal
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+	request_body {
+		max_size 12MB
+	}
+	reverse_proxy backend:8000
+}

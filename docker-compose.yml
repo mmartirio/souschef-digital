@@ -1,31 +1,70 @@
 services:
   backend:
     build: ./backend
+    restart: unless-stopped
+    # Só na própria máquina (testes/scripts); o celular acessa pelo HTTPS do Caddy (8443).
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_KEY}
+      - DATABASE_URL=postgresql+psycopg://souschef:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/souschef
+      - MEDIA_DIR=/app/data/media
+      - SECRET_KEY=${SECRET_KEY:?defina SECRET_KEY no .env}
       - OLLAMA_URL=http://ollama:11434
-    depends_on:
-      - ollama
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - WHISPER_MODEL=${WHISPER_MODEL:-small}
+      - WHISPER_BEAM_SIZE=${WHISPER_BEAM_SIZE:-1}
+      - GOOGLE_CLIENT_IDS=${GOOGLE_CLIENT_IDS:-}
     volumes:
-      - ./backend:/app
-    networks:
-      - souschef-network
+      - backend-data:/app/data
+      - whisper-cache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+  # Proxy HTTPS (TLS) na frente do backend: único acesso do celular ao servidor.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      - SOUSCHEF_HOST=${SOUSCHEF_HOST:?defina SOUSCHEF_HOST no .env (IP do servidor na rede)}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - backend
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    # Sem "ports": o banco só é acessível pela rede interna do Docker (pelo backend).
+    environment:
+      - POSTGRES_DB=souschef
+      - POSTGRES_USER=souschef
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U souschef -d souschef"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   ollama:
     image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+    restart: unless-stopped
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+    # Sem "ports": só o backend acessa o Ollama, pela rede interna do Docker.
     volumes:
       - ollama-data:/root/.ollama
-    networks:
-      - souschef-network
 
 volumes:
+  caddy-data:
+  postgres-data:
+  backend-data:
+  whisper-cache:
   ollama-data:
-
-networks:
-  souschef-network:
-    driver: bridge
