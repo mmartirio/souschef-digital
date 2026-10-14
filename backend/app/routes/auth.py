@@ -1,191 +1,122 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+import secrets
 from datetime import timedelta
 from typing import Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+
 from app.database.connection import get_db
 from app.models.user import User
+from app.schemas import GoogleLogin, Token, UserCreate, UserOut
+from app.services.google_auth_service import google_auth_service
+from app.utils.rate_limit import login_limiter
 from app.utils.security import (
-    verify_password, 
-    get_password_hash, 
+    ACCESS_TOKEN_EXPIRE_MINUTES,
     create_access_token,
+    get_password_hash,
+    verify_password,
     verify_token,
-    ACCESS_TOKEN_EXPIRE_MINUTES
 )
-from app.utils.helpers import validate_email
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
-# Versão opcional (não gera 401 automática quando o header não existe)
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
-# Modelos Pydantic para validação
-from pydantic import BaseModel, EmailStr
 
-class UserCreate(BaseModel):
-    email: EmailStr
-    username: str
-    password: str
-    full_name: Optional[str] = None
+def _user_from_token(token: Optional[str], db: Session) -> Optional[User]:
+    payload = verify_token(token) if token else None
+    if not payload or "sub" not in payload:
+        return None
+    user = db.get(User, int(payload["sub"]))
+    return user if user and user.is_active else None
 
-class UserResponse(BaseModel):
-    id: int
-    email: str
-    username: str
-    full_name: Optional[str] = None
-    is_active: bool
-    
-    class Config:
-        from_attributes = True  # Substitui orm_mode no Pydantic v2
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-# Funções auxiliares
-def authenticate_user(db: Session, username: str, password: str):
-    """
-    Autentica usuário por username/email e senha.
-    """
-    # Tenta encontrar por username
-    user = db.query(User).filter(User.username == username).first()
-    
-    # Se não encontrar por username, tenta por email
-    if not user:
-        user = db.query(User).filter(User.email == username).first()
-    
-    if not user:
-        return False
-    
-    if not verify_password(password, user.hashed_password):
-        return False
-    
-    return user
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """
-    Obtém usuário atual a partir do token JWT.
-    """
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    
-    payload = verify_token(token)
-    if payload is None:
-        raise credentials_exception
-    
-    username: str = payload.get("sub")
-    if username is None:
-        raise credentials_exception
-    
-    user = db.query(User).filter(User.username == username).first()
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    user = _user_from_token(token, db)
     if user is None:
-        raise credentials_exception
-    
-    return user
-
-
-def get_current_user_optional(token: str = Depends(oauth2_scheme_optional), db: Session = Depends(get_db)):
-    """Retorna usuário se token válido, ou None se não houver token."""
-    if not token:
-        return None
-    try:
-        return get_current_user(token, db)
-    except HTTPException:
-        return None
-
-# Endpoints
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserCreate, db: Session = Depends(get_db)):
-    """
-    Registra um novo usuário.
-    """
-    # Verifica se email já existe
-    existing_email = db.query(User).filter(User.email == user_data.email).first()
-    if existing_email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    # Verifica se username já existe
-    existing_username = db.query(User).filter(User.username == user_data.username).first()
-    if existing_username:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already taken"
-        )
-    
-    # Valida email
-    if not validate_email(user_data.email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid email format"
-        )
-    
-    # Cria novo usuário
-    hashed_password = get_password_hash(user_data.password)
-    db_user = User(
-        email=user_data.email,
-        username=user_data.username,
-        hashed_password=hashed_password,
-        full_name=user_data.full_name
-    )
-    
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    
-    return db_user
-
-@router.post("/login", response_model=Token)
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
-):
-    """
-    Login de usuário. Retorna token JWT.
-    """
-    user = authenticate_user(db, form_data.username, form_data.password)
-    
-    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Credenciais inválidas",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
-        )
-    
-    # Cria token
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.username},
-        expires_delta=access_token_expires
+    return user
+
+
+def get_current_user_optional(
+    token: Optional[str] = Depends(oauth2_scheme_optional), db: Session = Depends(get_db)
+) -> Optional[User]:
+    return _user_from_token(token, db)
+
+
+def _issue_token(user: User) -> Token:
+    token = create_access_token(
+        {"sub": str(user.id)}, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    
-    return {"access_token": access_token, "token_type": "bearer"}
+    return Token(access_token=token, user=UserOut.model_validate(user))
 
-@router.get("/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
-    """
-    Retorna informações do usuário atual.
-    """
+
+@router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
+def register(data: UserCreate, db: Session = Depends(get_db)):
+    username = data.username or data.email
+    if db.query(User).filter(or_(User.email == data.email, User.username == username)).first():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Email ou usuário já cadastrado")
+
+    user = User(
+        email=data.email,
+        username=username,
+        full_name=data.full_name,
+        hashed_password=get_password_hash(data.password),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return _issue_token(user)
+
+
+@router.post("/login", response_model=Token)
+def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """Login por email ou username (form-urlencoded: username, password)."""
+    keys = (f"user:{form.username.lower()}", f"ip:{request.client.host if request.client else '-'}")
+    login_limiter.check(*keys)
+    user = db.query(User).filter(
+        or_(User.username == form.username, User.email == form.username)
+    ).first()
+    if not user or not verify_password(form.password, user.hashed_password):
+        login_limiter.fail(*keys)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email ou senha incorretos")
+    login_limiter.success(keys[0])
+    if not user.is_active:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Usuário inativo")
+    return _issue_token(user)
+
+
+@router.post("/google", response_model=Token)
+async def google_login(data: GoogleLogin, db: Session = Depends(get_db)):
+    """Login/cadastro com Google: valida o id_token e vincula pela conta de email."""
+    if not google_auth_service.enabled:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Login com Google não configurado")
+    identity = await google_auth_service.verify(data.id_token)
+    if identity is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token do Google inválido")
+
+    user = db.query(User).filter(User.email == identity.email).first()
+    if user is None:
+        user = User(
+            email=identity.email,
+            username=identity.email,
+            full_name=identity.name,
+            hashed_password=get_password_hash(secrets.token_urlsafe(32)),  # senha inutilizável
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    if not user.is_active:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Usuário inativo")
+    return _issue_token(user)
+
+
+@router.get("/me", response_model=UserOut)
+def me(current_user: User = Depends(get_current_user)):
     return current_user
-
-@router.post("/logout")
-async def logout():
-    """
-    Logout do usuário (client-side apenas, já que JWT é stateless).
-    """
-    return {"message": "Successfully logged out"}

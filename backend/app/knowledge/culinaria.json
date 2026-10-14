@@ -1,0 +1,137 @@
+[
+  {
+    "topic": "Substituição de ovo",
+    "keywords": [
+      "ovo",
+      "ovos",
+      "substituir",
+      "vegano",
+      "alergia"
+    ],
+    "content": "Cada ovo pode ser trocado por 1 colher de sopa de linhaça moída com 3 colheres de sopa de água (descansar 10 minutos), ou 1/4 de xícara de purê de banana em receitas doces, ou 3 colheres de sopa de aquafaba."
+  },
+  {
+    "topic": "Substituição de leite e manteiga",
+    "keywords": [
+      "leite",
+      "manteiga",
+      "lactose",
+      "substituir",
+      "vegano"
+    ],
+    "content": "Leite pode ser trocado por bebida vegetal na mesma quantidade. Manteiga pode ser trocada por óleo usando 3/4 da quantidade, ou por margarina na mesma medida."
+  },
+  {
+    "topic": "Substituição de fermento",
+    "keywords": [
+      "fermento",
+      "bicarbonato",
+      "substituir",
+      "crescer",
+      "bolo"
+    ],
+    "content": "1 colher de chá de fermento químico equivale a 1/4 de colher de chá de bicarbonato mais 1/2 colher de chá de vinagre ou suco de limão. Fermento biológico seco: 10 g equivalem a cerca de 30 g do fresco."
+  },
+  {
+    "topic": "Conversão de medidas",
+    "keywords": [
+      "xicara",
+      "colher",
+      "gramas",
+      "medida",
+      "converter",
+      "quantos",
+      "ml"
+    ],
+    "content": "1 xícara = 240 ml. 1 xícara de farinha de trigo ≈ 120 g; de açúcar ≈ 180 g; de arroz cru ≈ 185 g. 1 colher de sopa = 15 ml; 1 colher de chá = 5 ml. 1 colher de sopa de manteiga ≈ 14 g."
+  },
+  {
+    "topic": "Ponto de cozimento da carne",
+    "keywords": [
+      "carne",
+      "ponto",
+      "mal",
+      "passada",
+      "temperatura",
+      "bife",
+      "frango",
+      "porco"
+    ],
+    "content": "Temperatura interna: carne bovina mal passada 52 °C, ao ponto 60 °C, bem passada 70 °C. Frango e aves 74 °C. Porco 63 °C com 3 minutos de descanso. Deixe a carne descansar alguns minutos antes de cortar."
+  },
+  {
+    "topic": "Arroz soltinho",
+    "keywords": [
+      "arroz",
+      "soltinho",
+      "agua",
+      "proporcao",
+      "cozinhar"
+    ],
+    "content": "Refogue o arroz no óleo com alho e cebola, use cerca de 2 partes de água quente para 1 de arroz branco, fogo baixo com tampa até secar e deixe descansar 5 minutos tampado."
+  },
+  {
+    "topic": "Temperatura do forno",
+    "keywords": [
+      "forno",
+      "temperatura",
+      "graus",
+      "baixo",
+      "medio",
+      "alto",
+      "preaquecer"
+    ],
+    "content": "Forno baixo: 150 a 160 °C. Médio: 180 °C. Médio-alto: 200 °C. Alto: 220 a 250 °C. Preaqueça por 10 a 15 minutos. Bolos geralmente assam a 180 °C."
+  },
+  {
+    "topic": "Segurança alimentar",
+    "keywords": [
+      "geladeira",
+      "conservar",
+      "estragado",
+      "validade",
+      "sobras",
+      "congelar",
+      "descongelar"
+    ],
+    "content": "Sobras cozidas duram 3 a 4 dias na geladeira em pote fechado. Descongele na geladeira, nunca em temperatura ambiente. Não recongele alimentos crus já descongelados. Esfrie a comida em até 2 horas antes de guardar."
+  },
+  {
+    "topic": "Comida muito salgada",
+    "keywords": [
+      "salgado",
+      "sal",
+      "consertar",
+      "corrigir",
+      "passou"
+    ],
+    "content": "Para corrigir excesso de sal: aumente o volume com mais ingredientes sem sal (água, caldo sem sal, legumes, creme de leite) ou sirva com acompanhamento neutro como arroz. Um pouco de acidez (limão) ajuda a equilibrar."
+  },
+  {
+    "topic": "Molho que talhou ou está ralo",
+    "keywords": [
+      "molho",
+      "ralo",
+      "grosso",
+      "engrossar",
+      "talhou",
+      "amido"
+    ],
+    "content": "Para engrossar: 1 colher de sopa de amido de milho dissolvida em água fria para cada 250 ml de molho, fervendo 1 minuto. Se talhou (molhos com creme/ovos), tire do fogo e bata com um pouco de líquido frio."
+  },
+  {
+    "topic": "Ovo cozido",
+    "keywords": [
+      "ovo",
+      "ovos",
+      "cozido",
+      "cozinhar",
+      "gema",
+      "mole",
+      "duro",
+      "tempo",
+      "minutos"
+    ],
+    "content": "Coloque o ovo na água já fervendo. Gema mole: 6 minutos. Gema cremosa: 8 minutos. Ovo duro: 10 a 12 minutos. Depois passe para água gelada para parar o cozimento e descascar fácil."
+  }
+]

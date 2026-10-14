@@ -1,256 +1,156 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 from typing import List, Optional
-from pydantic import BaseModel
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
+from sqlalchemy.orm import Session, selectinload
 
 from app.database.connection import get_db
-from app.models.recipe import Recipe, Ingredient
+from app.models.favorite import Favorite
+from app.models.recipe import Ingredient, Recipe
 from app.models.user import User
 from app.routes.auth import get_current_user
+from app.schemas import (
+    CountryCount,
+    Difficulty,
+    RecipeCreate,
+    RecipeOut,
+    RecipeUpdate,
+    SyncSnapshot,
+)
+from app.services.recipes import build_recipe
 
 router = APIRouter()
 
-# Modelos Pydantic
-class IngredientCreate(BaseModel):
-    name: str
-    quantity: str
 
-class IngredientResponse(BaseModel):
-    id: int
-    name: str
-    quantity: str
-    recipe_id: int
-    
-    class Config:
-        from_attributes = True
+def get_recipe_or_404(db: Session, recipe_id: int) -> Recipe:
+    recipe = db.get(Recipe, recipe_id)
+    if recipe is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Receita não encontrada")
+    return recipe
 
-class RecipeCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    instructions: str
-    prep_time: Optional[int] = None
-    cook_time: Optional[int] = None
-    servings: Optional[int] = None
-    difficulty: Optional[str] = None
-    ingredients: List[IngredientCreate] = []
 
-class RecipeUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    instructions: Optional[str] = None
-    prep_time: Optional[int] = None
-    cook_time: Optional[int] = None
-    servings: Optional[int] = None
-    difficulty: Optional[str] = None
-    ingredients: Optional[List[IngredientCreate]] = None
+def _get_owned_recipe(db: Session, recipe_id: int, user: User) -> Recipe:
+    recipe = get_recipe_or_404(db, recipe_id)
+    if recipe.user_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Sem permissão para alterar esta receita")
+    return recipe
 
-class RecipeResponse(BaseModel):
-    id: int
-    title: str
-    description: Optional[str]
-    instructions: str
-    prep_time: Optional[int]
-    cook_time: Optional[int]
-    servings: Optional[int]
-    difficulty: Optional[str]
-    user_id: int
-    ingredients: List[IngredientResponse] = []
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    
-    class Config:
-        from_attributes = True
 
-# Endpoints
-@router.post("/", response_model=RecipeResponse, status_code=status.HTTP_201_CREATED)
-async def create_recipe(
-    recipe_data: RecipeCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Cria uma nova receita.
-    """
-    # Valida dificuldade se fornecida
-    if recipe_data.difficulty and recipe_data.difficulty not in ['easy', 'medium', 'hard']:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Difficulty must be 'easy', 'medium', or 'hard'"
-        )
-    
-    # Cria receita
-    db_recipe = Recipe(
-        title=recipe_data.title,
-        description=recipe_data.description,
-        instructions=recipe_data.instructions,
-        prep_time=recipe_data.prep_time,
-        cook_time=recipe_data.cook_time,
-        servings=recipe_data.servings,
-        difficulty=recipe_data.difficulty,
-        user_id=current_user.id
-    )
-    
-    db.add(db_recipe)
-    db.commit()
-    db.refresh(db_recipe)
-    
-    # Adiciona ingredientes
-    for ingredient_data in recipe_data.ingredients:
-        ingredient = Ingredient(
-            name=ingredient_data.name,
-            quantity=ingredient_data.quantity,
-            recipe_id=db_recipe.id
-        )
-        db.add(ingredient)
-    
-    db.commit()
-    db.refresh(db_recipe)
-    
-    return db_recipe
+def _as_utc(moment: datetime) -> datetime:
+    return moment.replace(tzinfo=timezone.utc) if moment.tzinfo is None else moment.astimezone(timezone.utc)
 
-@router.get("/", response_model=List[RecipeResponse])
-async def read_recipes(
+
+def _server_is_newer(recipe: Recipe, client_updated_at: Optional[datetime]) -> bool:
+    """A versão do servidor foi salva depois da edição feita no celular."""
+    return bool(client_updated_at and recipe.updated_at and _as_utc(recipe.updated_at) > _as_utc(client_updated_at))
+
+
+def _get_editable_recipe(db: Session, recipe_id: int, user: User) -> Recipe:
+    """Receitas próprias ou do livro de receitas podem ser editadas."""
+    recipe = get_recipe_or_404(db, recipe_id)
+    if recipe.user_id != user.id and not recipe.from_book:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Sem permissão para alterar esta receita")
+    return recipe
+
+
+@router.get("/", response_model=List[RecipeOut])
+def list_recipes(
     skip: int = 0,
-    limit: int = 100,
-    search: Optional[str] = Query(None, description="Search in title and description"),
-    difficulty: Optional[str] = Query(None, description="Filter by difficulty"),
-    user_id: Optional[int] = Query(None, description="Filter by user"),
-    db: Session = Depends(get_db)
+    limit: int = Query(50, le=100),
+    search: Optional[str] = None,
+    difficulty: Optional[Difficulty] = None,
+    country: Optional[str] = None,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
 ):
-    """
-    Retorna lista de receitas com filtros opcionais.
-    """
     query = db.query(Recipe)
-    
-    # Aplica filtros
     if search:
-        query = query.filter(
-            (Recipe.title.ilike(f"%{search}%")) | 
-            (Recipe.description.ilike(f"%{search}%"))
-        )
-    
+        pattern = f"%{search}%"
+        query = query.filter(Recipe.title.ilike(pattern) | Recipe.description.ilike(pattern))
     if difficulty:
         query = query.filter(Recipe.difficulty == difficulty)
-    
+    if country:
+        query = query.filter(Recipe.country == country)
     if user_id:
         query = query.filter(Recipe.user_id == user_id)
-    
-    recipes = query.offset(skip).limit(limit).all()
-    return recipes
+    return query.order_by(Recipe.id.desc()).offset(skip).limit(limit).all()
 
-@router.get("/{recipe_id}", response_model=RecipeResponse)
-async def read_recipe(
-    recipe_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Retorna uma receita específica por ID.
-    """
-    recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
-    
-    if recipe is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recipe not found"
-        )
-    
-    return recipe
 
-@router.put("/{recipe_id}", response_model=RecipeResponse)
-async def update_recipe(
-    recipe_id: int,
-    recipe_update: RecipeUpdate,
+@router.get("/sync", response_model=SyncSnapshot)
+def sync_snapshot(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Todas as receitas e os favoritos do usuário, para o banco local do celular."""
+    recipes = db.query(Recipe).options(selectinload(Recipe.ingredients), selectinload(Recipe.user)).all()
+    favorite_ids = [recipe_id for (recipe_id,) in db.query(Favorite.recipe_id).filter_by(user_id=current_user.id)]
+    return SyncSnapshot(server_time=datetime.now(timezone.utc), recipes=recipes, favorite_ids=favorite_ids)
+
+
+@router.get("/countries", response_model=List[CountryCount])
+def list_countries(db: Session = Depends(get_db)):
+    """Países de criação com receitas cadastradas, do que tem mais receitas para o que tem menos."""
+    rows = (
+        db.query(Recipe.country, func.count(Recipe.id))
+        .filter(Recipe.country.isnot(None))
+        .group_by(Recipe.country)
+        .order_by(func.count(Recipe.id).desc(), Recipe.country)
+        .all()
+    )
+    return [CountryCount(country=country, recipe_count=count) for country, count in rows]
+
+
+@router.post("/", response_model=RecipeOut, status_code=status.HTTP_201_CREATED)
+def create_recipe(
+    data: RecipeCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Atualiza uma receita existente.
-    """
-    recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
-    
-    if recipe is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recipe not found"
-        )
-    
-    # Verifica se o usuário é o dono da receita
-    if recipe.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to update this recipe"
-        )
-    
-    # Atualiza campos
-    update_data = recipe_update.dict(exclude_unset=True)
-    
-    # Se há ingredientes para atualizar, remove os antigos
-    if "ingredients" in update_data and update_data["ingredients"] is not None:
-        # Remove ingredientes antigos
-        db.query(Ingredient).filter(Ingredient.recipe_id == recipe_id).delete()
-        
-        # Adiciona novos ingredientes
-        for ingredient_data in update_data["ingredients"]:
-            ingredient = Ingredient(
-                name=ingredient_data["name"],
-                quantity=ingredient_data["quantity"],
-                recipe_id=recipe_id
-            )
-            db.add(ingredient)
-        
-        update_data.pop("ingredients")
-    
-    # Atualiza outros campos
-    for field, value in update_data.items():
-        if value is not None:
-            setattr(recipe, field, value)
-    
+    if data.client_ref:  # reenvio de uma criação offline: devolve a receita já criada
+        existing = db.query(Recipe).filter_by(client_ref=data.client_ref, user_id=current_user.id).first()
+        if existing:
+            return existing
+    recipe = build_recipe(data, current_user.id)
+    if data.client_updated_at:  # criada offline: vale o horário em que foi feita
+        recipe.updated_at = data.client_updated_at
+    db.add(recipe)
     db.commit()
     db.refresh(recipe)
-    
     return recipe
 
+
+@router.get("/{recipe_id}", response_model=RecipeOut)
+def read_recipe(recipe_id: int, db: Session = Depends(get_db)):
+    return get_recipe_or_404(db, recipe_id)
+
+
+@router.put("/{recipe_id}", response_model=RecipeOut)
+def update_recipe(
+    recipe_id: int,
+    data: RecipeUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    recipe = _get_editable_recipe(db, recipe_id, current_user)
+    if _server_is_newer(recipe, data.client_updated_at):  # última alteração vence
+        return recipe
+    recipe.customized = recipe.from_book
+    # Horário em que a alteração foi feita (no celular, se veio de lá): base da regra
+    # "última alteração vence". Marca a edição mesmo quando só os ingredientes mudam.
+    recipe.updated_at = data.client_updated_at or func.now()
+    changes = data.model_dump(exclude_unset=True, exclude={"ingredients", "client_updated_at"})
+    for field, value in changes.items():
+        setattr(recipe, field, value)
+    if data.ingredients is not None:
+        recipe.ingredients = [Ingredient(**i.model_dump()) for i in data.ingredients]
+    db.commit()
+    db.refresh(recipe)
+    return recipe
+
+
 @router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_recipe(
+def delete_recipe(
     recipe_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Deleta uma receita.
-    """
-    recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
-    
-    if recipe is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recipe not found"
-        )
-    
-    # Verifica se o usuário é o dono da receita
-    if recipe.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to delete this recipe"
-        )
-    
-    db.delete(recipe)
+    db.delete(_get_owned_recipe(db, recipe_id, current_user))
     db.commit()
-    
-    return None
-
-@router.get("/user/me", response_model=List[RecipeResponse])
-async def read_my_recipes(
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Retorna receitas do usuário atual.
-    """
-    recipes = db.query(Recipe).filter(
-        Recipe.user_id == current_user.id
-    ).offset(skip).limit(limit).all()
-    
-    return recipes

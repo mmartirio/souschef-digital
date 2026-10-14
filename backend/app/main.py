@@ -1,61 +1,78 @@
-from fastapi import FastAPI, Depends, HTTPException
+import asyncio
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from sqlalchemy.orm import Session
-from app.routes import auth, users, recipes, categories, ai, favorites
-from app.database.connection import get_db, Base, engine
-from app.middleware.auth import AuthMiddleware
-from app.middleware.tenant import TenantMiddleware
 
-# Importa os modelos para garantir que sejam criados no banco de dados
-from app.models import user, recipe, category, favorite
+from app import models  # noqa: F401  (registra os modelos no metadata)
+from app.database.connection import Base, SessionLocal, engine, get_db, migrate
+from app.routes import ai, auth, categories, favorites, recipes, users
+from app.routes.auth import get_current_user
+from app.services.ollama_service import ollama_service
+from app.services.recipes import seed_recipes
+from app.services.transcription_service import transcription_service
 
-# Cria as tabelas no banco de dados
 Base.metadata.create_all(bind=engine)
+migrate()
+users.MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    with SessionLocal() as db:
+        seed_recipes(db)
+    # Pré-carrega os modelos em segundo plano para a primeira conversa por voz ser rápida
+    tasks = [
+        asyncio.create_task(ollama_service.warm_up()),
+        asyncio.create_task(asyncio.to_thread(transcription_service.warm_up)),
+    ]
+    yield
+    for task in tasks:
+        task.cancel()
+
+
+# Documentação interativa (/docs) só quando ENABLE_DOCS=true (ex.: desenvolvimento).
+DOCS = os.getenv("ENABLE_DOCS", "false").lower() == "true"
 app = FastAPI(
     title="SousChef Digital API",
-    description="API para o sistema SousChef Digital, gerenciando usuários e receitas.",
-    version="1.0.0"
+    version="1.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if DOCS else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if DOCS else None,
 )
 
-# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8081"],
-    allow_credentials=True,
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 @app.get("/")
-async def root():
-    return {
-        "message": "SousChef Digital API",
-        "status": "running", 
-        "version": "1.0.0"
-    }
+def root():
+    return {"message": "SousChef Digital API", "status": "running"}
+
 
 @app.get("/health")
-async def health_check(db: Session = Depends(get_db)):
-    """Verifica a saúde da API e a conexão com o banco de dados."""
+def health(db: Session = Depends(get_db)):
     try:
-        # Tenta executar uma consulta simples para verificar a conexão com o banco de dados
-        db.execute("SELECT 1")
-        return {"status": "healthy", "database": "connected"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Database error: {str(e)}"
-        )
+        db.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(503, "Banco de dados indisponível")  # sem detalhes internos
+    return {"status": "healthy", "database": "connected"}
 
-# Inclui rotas
+
+# Só /auth (entrar e cadastrar) e /health são públicos: todo o resto exige um usuário válido.
+LOGGED_IN = [Depends(get_current_user)]
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
-app.include_router(users.router, prefix="/users", tags=["users"])
-app.include_router(recipes.router, prefix="/recipes", tags=["recipes"])
-app.include_router(categories.router, prefix="/categories", tags=["categories"])
-app.include_router(ai.router, prefix="/ai", tags=["ai"])
-app.include_router(favorites.router, prefix="/favorites", tags=["favorites"])
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+app.include_router(users.router, prefix="/users", tags=["users"], dependencies=LOGGED_IN)
+app.include_router(users.media_router, prefix=users.MEDIA_URL, tags=["media"], dependencies=LOGGED_IN)
+app.include_router(recipes.router, prefix="/recipes", tags=["recipes"], dependencies=LOGGED_IN)
+app.include_router(categories.router, prefix="/categories", tags=["categories"], dependencies=LOGGED_IN)
+app.include_router(favorites.router, prefix="/favorites", tags=["favorites"], dependencies=LOGGED_IN)
+app.include_router(ai.router, prefix="/ai", tags=["ai"], dependencies=LOGGED_IN)

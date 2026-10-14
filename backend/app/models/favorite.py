@@ -1,12 +1,12 @@
-from sqlalchemy import Column, Integer, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from app.database.connection import Base
 
 class Favorite(Base):
     """Modelo de favoritos para o sistema."""
     __tablename__ = "favorites"
+    __table_args__ = (UniqueConstraint("user_id", "recipe_id", name="uq_favorite_user_recipe"),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -15,7 +15,7 @@ class Favorite(Base):
 
     # Relacionamentos
     user = relationship("User")
-    recipe = relationship("Recipe")
+    recipe = relationship("Recipe", back_populates="favorites")
 
     def __repr__(self):
         return f"<Favorite(user_id={self.user_id}, recipe_id={self.recipe_id})>"
