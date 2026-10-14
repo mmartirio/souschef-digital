@@ -217,6 +217,9 @@ def test_find_recipe_by_spoken_request():
     cuscuz = client.get("/ai/find-recipe", headers=login_headers("ia@test.com"), params={"q": "quero uma receita de cuscuz"}).json()
     assert cuscuz["match"] is None
     assert {"Cuscuz nordestino", "Cuscuz marroquino com legumes"} <= {o["title"] for o in cuscuz["options"]}
+    # erro de transcrição ("pão" → "pan") não impede achar a receita
+    misheard = client.get("/ai/find-recipe", headers=login_headers("ia@test.com"), params={"q": "vamos fazer pan de queijo"}).json()
+    assert misheard["match"]["title"] == "Pão de queijo"
     ambiguous = client.get("/ai/find-recipe", headers=login_headers("ia@test.com"), params={"q": "quero fazer um bolo"}).json()
     assert ambiguous["match"] is None and len(ambiguous["options"]) > 1
 

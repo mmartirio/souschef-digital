@@ -8,7 +8,7 @@ VOCABULARY_PROMPT = (
     "Conversa em português com o SousChef, assistente de culinária, sobre receitas, "
     "ingredientes e modo de preparo: xícara, colher de sopa, colher de chá, gramas, "
     "forno, panela, frigideira, refogar, assar, fritar, temperar, leite condensado, "
-    "fermento, farinha de trigo, brigadeiro, feijoada, baião de dois, strogonoff, "
+    "fermento, farinha de trigo, pão, pão de queijo, brigadeiro, feijoada, baião de dois, strogonoff, "
     "hambúrguer, bolo. Comandos: próximo, anterior, repetir, sair, tchau."
 )
 

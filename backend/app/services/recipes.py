@@ -1,7 +1,7 @@
 """Construção de receitas e carga inicial (seed) a partir de app/knowledge/receitas/*.json."""
 import json
 import secrets
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -36,10 +36,35 @@ def describe_recipe(recipe: Recipe, max_instructions: Optional[int] = None) -> s
     )
 
 
+def _one_letter_off(word: str, other: str) -> bool:
+    """Diferem em uma só letra (trocada, a mais ou a menos): "pan" ~ "pao", erro comum da transcrição."""
+    if abs(len(word) - len(other)) > 1:
+        return False
+    i = 0
+    while i < min(len(word), len(other)) and word[i] == other[i]:
+        i += 1
+    return word[i + 1:] == other[i + 1:] or word[i + 1:] == other[i:] or word[i:] == other[i + 1:]
+
+
+SIMILAR_WEIGHT = 0.9  # palavra quase igual vale um pouco menos que a exata (desempate)
+
+
+def _matched(words: Set[str], title_words: Set[str]) -> float:
+    """Palavras do título citadas no texto, iguais ou quase iguais (erro de transcrição).
+
+    A aproximação só vale entre palavras que não casaram exatamente ("bolo" não vira "rolo").
+    """
+    exact = words & title_words
+    spare = words - exact
+    similar = sum(1 for t in title_words - exact if any(_one_letter_off(t, w) for w in spare))
+    return len(exact) + SIMILAR_WEIGHT * similar
+
+
 def find_recipes(db: Session, question: str, limit: int = 3) -> List[Tuple[float, Recipe]]:
     """Receitas cujo título aparece na pergunta, com a cobertura do título (0 a 1).
 
-    Cobertura = fração das palavras do título presentes na pergunta (sem acentos).
+    Cobertura = fração das palavras do título presentes na pergunta (sem acentos, tolerando erros
+    de transcrição).
     """
     words = tokenize(question)
     if not words:
@@ -47,7 +72,7 @@ def find_recipes(db: Session, question: str, limit: int = 3) -> List[Tuple[float
     scored = []
     for id_, title in db.query(Recipe.id, Recipe.title):
         title_words = tokenize(title)
-        matched = len(words & title_words)
+        matched = _matched(words, title_words)
         if matched:
             scored.append((matched / len(title_words), matched, id_))
     best = sorted(scored, reverse=True)[:limit]
@@ -74,7 +99,7 @@ def search_requested_recipe(db: Session, text: str) -> Tuple[Optional[Recipe], L
     candidates = []
     for id_, title in db.query(Recipe.id, Recipe.title):
         title_words = tokenize(title)
-        matched = len(words & title_words)
+        matched = _matched(words, title_words)
         if matched:
             candidates.append((matched, matched / len(title_words), id_))
     if not candidates:
