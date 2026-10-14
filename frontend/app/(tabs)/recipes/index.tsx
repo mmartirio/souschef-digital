@@ -1,240 +1,92 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  RefreshControl,
-} from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../../lib/supabase';
-import { COLORS, SIZES, API_URL } from '../../../lib/constants';
+import CountryPicker from '../../../components/recipes/CountryPicker';
+import RecipeList from '../../../components/recipes/RecipeList';
+import { useFavorites } from '../../../hooks/useFavorites';
+import { useLocalData } from '../../../hooks/useLocalData';
+import { localRecipes } from '../../../lib/localStore';
+import { syncNow } from '../../../lib/sync';
+import { COLORS, DIFFICULTIES, SIZES } from '../../../lib/constants';
+import type { Difficulty } from '../../../lib/types';
 
-interface Recipe {
-  id: number;
-  title: string;
-  description: string;
-  difficulty: string;
-  prep_time: number;
-  cook_time: number;
-  servings: number;
-}
+const FILTERS: (Difficulty | null)[] = [null, 'easy', 'medium', 'hard'];
 
 export default function RecipesScreen() {
   const router = useRouter();
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [loading, setLoading] = useState(true);
+  const params = useLocalSearchParams<{ search?: string; difficulty?: Difficulty; country?: string }>();
+  const [search, setSearch] = useState(params.search ?? '');
+  const [difficulty, setDifficulty] = useState<Difficulty | null>(params.difficulty ?? null);
+  const [country, setCountry] = useState<string | null>(params.country ?? null);
   const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<string>('all');
-  const [authToken, setAuthToken] = useState<string | null>(null);
+  const favorites = useFavorites();
 
+  // Parâmetros vindos da home/categorias
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setAuthToken(data.session?.access_token ?? null);
-    });
+    if (params.search !== undefined) setSearch(params.search);
+    if (params.difficulty !== undefined) setDifficulty(params.difficulty);
+    if (params.country !== undefined) setCountry(params.country);
+  }, [params.search, params.difficulty, params.country]);
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthToken(session?.access_token ?? null);
-    });
-
-    return () => {
-      listener?.subscription.unsubscribe();
-    };
-  }, []);
-
-  const fetchRecipes = async () => {
-    try {
-      let url = `${API_URL}/recipes/`;
-      const params = [];
-      
-      if (searchQuery) params.push(`search=${searchQuery}`);
-      if (filter !== 'all') params.push(`difficulty=${filter}`);
-      
-      if (params.length > 0) url += `?${params.join('&')}`;
-
-      const headers: Record<string, string> = {};
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-
-      const response = await fetch(url, { headers });
-
-      if (!response.ok) {
-        const body = await response.text();
-        console.error('Erro ao buscar receitas:', response.status, body);
-        return;
-      }
-
-      const data = await response.json();
-      setRecipes(data);
-    } catch (error) {
-      console.error('Erro ao buscar receitas:', error);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchRecipes();
-  }, [searchQuery, filter]);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchRecipes();
-  };
-
-  const getDifficultyColor = (difficulty: string) => {
-    switch (difficulty) {
-      case 'easy': return '#4CAF50';
-      case 'medium': return '#FF9800';
-      case 'hard': return '#F44336';
-      default: return COLORS.textSecondary;
-    }
-  };
-
-  const getDifficultyText = (difficulty: string) => {
-    switch (difficulty) {
-      case 'easy': return 'Fácil';
-      case 'medium': return 'Médio';
-      case 'hard': return 'Difícil';
-      default: return difficulty;
-    }
-  };
-
-  const renderRecipeCard = ({ item }: { item: Recipe }) => (
-    <TouchableOpacity
-      style={styles.recipeCard}
-      onPress={() => router.push(`/(tabs)/recipes/${item.id}`)}
-    >
-      <View style={styles.recipeHeader}>
-        <Text style={styles.recipeTitle} numberOfLines={2}>
-          {item.title}
-        </Text>
-        <View 
-          style={[
-            styles.difficultyBadge,
-            { backgroundColor: getDifficultyColor(item.difficulty) }
-          ]}
-        >
-          <Text style={styles.difficultyText}>
-            {getDifficultyText(item.difficulty)}
-          </Text>
-        </View>
-      </View>
-
-      <Text style={styles.recipeDescription} numberOfLines={2}>
-        {item.description || 'Sem descrição'}
-      </Text>
-
-      <View style={styles.recipeInfo}>
-        <View style={styles.infoItem}>
-          <Ionicons name="time-outline" size={16} color={COLORS.textSecondary} />
-          <Text style={styles.infoText}>
-            {(item.prep_time || 0) + (item.cook_time || 0)}min
-          </Text>
-        </View>
-        <View style={styles.infoItem}>
-          <Ionicons name="people-outline" size={16} color={COLORS.textSecondary} />
-          <Text style={styles.infoText}>{item.servings || 0} porções</Text>
-        </View>
-      </View>
-    </TouchableOpacity>
+  // Busca no banco local: instantânea e funciona sem conexão.
+  const { data: recipes } = useLocalData(
+    () => localRecipes.list({ search, difficulty, country }),
+    [search, difficulty, country],
   );
-
-  if (loading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color={COLORS.secondary} />
-      </View>
-    );
-  }
 
   return (
     <View style={styles.container}>
-      {/* Search Bar */}
-      <View style={styles.searchSection}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={20} color={COLORS.textSecondary} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Buscar receitas..."
-            placeholderTextColor={COLORS.textSecondary}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={20} color={COLORS.textSecondary} />
+      <View style={styles.searchBar}>
+        <Ionicons name="search" size={20} color={COLORS.textSecondary} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Buscar receitas..."
+          placeholderTextColor={COLORS.textSecondary}
+          value={search}
+          onChangeText={setSearch}
+        />
+        {!!search && (
+          <TouchableOpacity onPress={() => setSearch('')}>
+            <Ionicons name="close-circle" size={20} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={styles.filters}>
+        {FILTERS.map((value) => {
+          const active = difficulty === value;
+          return (
+            <TouchableOpacity
+              key={value ?? 'all'}
+              style={[styles.filter, active && styles.filterActive]}
+              onPress={() => setDifficulty(value)}
+            >
+              <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                {value ? DIFFICULTIES[value].label : 'Todas'}
+              </Text>
             </TouchableOpacity>
-          )}
-        </View>
+          );
+        })}
       </View>
 
-      {/* Filter Buttons */}
-      <View style={styles.filterSection}>
-        <TouchableOpacity
-          style={[styles.filterButton, filter === 'all' && styles.filterButtonActive]}
-          onPress={() => setFilter('all')}
-        >
-          <Text style={[styles.filterText, filter === 'all' && styles.filterTextActive]}>
-            Todas
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterButton, filter === 'easy' && styles.filterButtonActive]}
-          onPress={() => setFilter('easy')}
-        >
-          <Text style={[styles.filterText, filter === 'easy' && styles.filterTextActive]}>
-            Fáceis
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterButton, filter === 'medium' && styles.filterButtonActive]}
-          onPress={() => setFilter('medium')}
-        >
-          <Text style={[styles.filterText, filter === 'medium' && styles.filterTextActive]}>
-            Médias
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterButton, filter === 'hard' && styles.filterButtonActive]}
-          onPress={() => setFilter('hard')}
-        >
-          <Text style={[styles.filterText, filter === 'hard' && styles.filterTextActive]}>
-            Difíceis
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <CountryPicker value={country} onChange={setCountry} />
 
-      {/* Recipes List */}
-      <FlatList
-        data={recipes}
-        renderItem={renderRecipeCard}
-        keyExtractor={(item) => item.id.toString()}
-        contentContainerStyle={styles.listContainer}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons name="restaurant-outline" size={64} color={COLORS.border} />
-            <Text style={styles.emptyText}>Nenhuma receita encontrada</Text>
-            <Text style={styles.emptySubtext}>
-              Tente ajustar os filtros de busca
-            </Text>
-          </View>
-        }
+      <RecipeList
+        recipes={recipes ?? []}
+        loading={recipes === null}
+        refreshing={refreshing}
+        onRefresh={async () => {
+          // Puxar para atualizar: envia o que está pendente e baixa as novidades do servidor.
+          setRefreshing(true);
+          await syncNow();
+          setRefreshing(false);
+        }}
+        favoriteIds={favorites.ids}
+        onToggleFavorite={(recipe) => favorites.toggle(recipe.id)}
       />
 
-      {/* FAB - Add Recipe */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => router.push('/(tabs)/recipes/create')}
-      >
+      <TouchableOpacity style={styles.fab} onPress={() => router.push('/recipes/create')}>
         <Ionicons name="add" size={28} color={COLORS.background} />
       </TouchableOpacity>
     </View>
@@ -242,140 +94,35 @@ export default function RecipesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.background,
-  },
-  searchSection: {
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: 12,
-    backgroundColor: COLORS.background,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
+  container: { flex: 1, backgroundColor: COLORS.background },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 25,
+    gap: 8,
+    margin: SIZES.padding,
+    marginBottom: 8,
     paddingHorizontal: 16,
     height: 45,
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 16,
-    color: COLORS.text,
-  },
-  filterSection: {
-    flexDirection: 'row',
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: 12,
-    gap: 8,
-    backgroundColor: COLORS.background,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  filterButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 25,
     backgroundColor: COLORS.cardBg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
   },
-  filterButtonActive: {
-    backgroundColor: COLORS.text,
-    borderColor: COLORS.text,
-  },
-  filterText: {
-    fontSize: 14,
-    color: COLORS.text,
-    fontWeight: '500',
-  },
-  filterTextActive: {
-    color: COLORS.background,
-  },
-  listContainer: {
-    padding: SIZES.padding,
-  },
-  recipeCard: {
-    backgroundColor: COLORS.background,
-    borderRadius: SIZES.radius,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  recipeHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  recipeTitle: {
+  searchInput: { flex: 1, fontSize: 16, color: COLORS.text },
+  // Os 4 filtros dividem a linha em partes iguais.
+  filters: { flexDirection: 'row', gap: 8, paddingHorizontal: SIZES.padding },
+  filter: {
     flex: 1,
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: COLORS.text,
-    marginRight: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.cardBg,
   },
-  difficultyBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  difficultyText: {
-    fontSize: 12,
-    color: COLORS.background,
-    fontWeight: '600',
-  },
-  recipeDescription: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    marginBottom: 12,
-    lineHeight: 20,
-  },
-  recipeInfo: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  infoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  infoText: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    marginTop: 8,
-  },
+  filterActive: { backgroundColor: COLORS.text, borderColor: COLORS.text },
+  // O texto ocupa a largura inteira do card (centralizado), e não só a medida da palavra:
+  // em alguns Android a fonte é desenhada mais larga que a medida e as últimas letras sumiam.
+  filterText: { fontSize: 14, color: COLORS.text, textAlign: 'center' },
+  filterTextActive: { color: COLORS.background },
   fab: {
     position: 'absolute',
     right: 20,
@@ -387,9 +134,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
   },
 });

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, TextInput, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -7,10 +7,9 @@ interface InputProps {
   placeholder?: string;
   value: string;
   onChangeText: (text: string) => void;
+  /** Campo de senha: exibe o botão de mostrar/ocultar. */
   secureTextEntry?: boolean;
   icon?: keyof typeof Ionicons.glyphMap;
-  rightIcon?: keyof typeof Ionicons.glyphMap;
-  onRightIconPress?: () => void;
   error?: string;
   multiline?: boolean;
   numberOfLines?: number;
@@ -24,13 +23,13 @@ export default function Input({
   onChangeText,
   secureTextEntry = false,
   icon,
-  rightIcon,
-  onRightIconPress,
   error,
   multiline = false,
   numberOfLines = 1,
   keyboardType = 'default',
 }: InputProps) {
+  const [hidden, setHidden] = useState(true);
+
   return (
     <View style={styles.container}>
       {label && <Text style={styles.label}>{label}</Text>}
@@ -44,14 +43,19 @@ export default function Input({
           placeholderTextColor="#999"
           value={value}
           onChangeText={onChangeText}
-          secureTextEntry={secureTextEntry}
+          secureTextEntry={secureTextEntry && hidden}
           multiline={multiline}
           numberOfLines={numberOfLines}
           keyboardType={keyboardType}
+          autoCapitalize={keyboardType === 'email-address' || secureTextEntry ? 'none' : 'sentences'}
         />
-        {rightIcon && (
-          <TouchableOpacity onPress={onRightIconPress}>
-            <Ionicons name={rightIcon} size={20} color="#666" style={styles.rightIcon} />
+        {secureTextEntry && (
+          <TouchableOpacity
+            onPress={() => setHidden(!hidden)}
+            hitSlop={10}
+            accessibilityLabel={hidden ? 'Mostrar senha' : 'Ocultar senha'}
+          >
+            <Ionicons name={hidden ? 'eye-outline' : 'eye-off-outline'} size={20} color="#666" style={styles.rightIcon} />
           </TouchableOpacity>
         )}
       </View>

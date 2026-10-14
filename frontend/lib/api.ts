@@ -1,211 +1,129 @@
-import axios, { AxiosInstance } from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  User,
-  Recipe,
-  Category,
-  Favorite,
-  ChatMessage,
+import axios, { isAxiosError } from 'axios';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+import { API_URL } from './constants';
+import type {
+  AIHealth,
   AuthResponse,
-  ApiError,
+  ChatMessage,
+  Recipe,
+  RecipeInput,
+  RecipeSearch,
+  SyncSnapshot,
+  Transcription,
+  User,
+  UserUpdate,
 } from './types';
 
-const API_URL = 'http://localhost:8000';
+export const TOKEN_KEY = 'auth_token';
+const AI_TIMEOUT = 120_000;
 
-// Criar instância do Axios
-const apiClient: AxiosInstance = axios.create({
-  baseURL: API_URL,
-  timeout: 10000,
+const client = axios.create({ baseURL: API_URL, timeout: 15_000 });
+
+client.interceptors.request.use(async (config) => {
+  const token = await SecureStore.getItemAsync(TOKEN_KEY);
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
 });
 
-// Interceptor para adicionar token nas requisições
-apiClient.interceptors.request.use(
-  async (config) => {
-    const token = await AsyncStorage.getItem('auth_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
+/** Mensagem legível a partir de erros da API. */
+export function errorMessage(error: unknown, fallback = 'Erro ao conectar com o servidor'): string {
+  if (isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) return detail.map((d) => d.msg).join('\n');
+    return fallback;
   }
-);
+  return error instanceof Error ? error.message : fallback;
+}
 
-// ============ AUTH ============
 export const authAPI = {
-  login: async (email: string, password: string): Promise<AuthResponse> => {
-    const response = await apiClient.post('/auth/login', { email, password });
-    if (response.data.access_token) {
-      await AsyncStorage.setItem('auth_token', response.data.access_token);
-    }
-    return response.data;
-  },
-
-  register: async (
-    name: string,
-    email: string,
-    password: string
-  ): Promise<User> => {
-    const response = await apiClient.post('/auth/register', {
-      name,
-      email,
-      password,
+  login: async (email: string, password: string) => {
+    const body = new URLSearchParams({ username: email, password }).toString();
+    const { data } = await client.post<AuthResponse>('/auth/login', body, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
-    return response.data;
+    return data;
   },
+  register: async (email: string, password: string, fullName: string) =>
+    (await client.post<AuthResponse>('/auth/register', { email, password, full_name: fullName })).data,
+  google: async (idToken: string) =>
+    (await client.post<AuthResponse>('/auth/google', { id_token: idToken })).data,
+  me: async () => (await client.get<User>('/auth/me')).data,
+};
 
-  logout: async (): Promise<void> => {
-    await AsyncStorage.removeItem('auth_token');
+/**
+ * Chamadas usadas só pela sincronização (lib/sync.ts). As telas leem e gravam no banco
+ * local (lib/localStore.ts), nunca direto no servidor.
+ */
+export const syncAPI = {
+  snapshot: async () => (await client.get<SyncSnapshot>('/recipes/sync')).data,
+  createRecipe: async (recipe: RecipeInput & { client_ref: string; client_updated_at: string }) =>
+    (await client.post<Recipe>('/recipes/', recipe)).data,
+  updateRecipe: async (id: number, recipe: RecipeInput & { client_updated_at: string }) =>
+    (await client.put<Recipe>(`/recipes/${id}`, recipe)).data,
+  deleteRecipe: async (id: number) => {
+    await client.delete(`/recipes/${id}`);
   },
-
-  getMe: async (): Promise<User> => {
-    const response = await apiClient.get('/auth/me');
-    return response.data;
+  addFavorite: async (recipeId: number) => {
+    await client.post('/favorites/', { recipe_id: recipeId });
+  },
+  removeFavorite: async (recipeId: number) => {
+    await client.delete(`/favorites/${recipeId}`);
   },
 };
 
-// ============ RECIPES ============
-export const recipesAPI = {
-  list: async (
-    skip: number = 0,
-    limit: number = 10,
-    search?: string,
-    difficulty?: string
-  ): Promise<Recipe[]> => {
-    const params = {
-      skip,
-      limit,
-      ...(search && { search }),
-      ...(difficulty && { difficulty }),
-    };
-    const response = await apiClient.get('/recipes', { params });
-    return response.data;
-  },
+/** URL absoluta para arquivos servidos pelo backend (ex.: /media/avatar.jpg). */
+export const mediaUrl = (path: string | null) => (path ? `${API_URL}${path}` : null);
 
-  get: async (id: number): Promise<Recipe> => {
-    const response = await apiClient.get(`/recipes/${id}`);
-    return response.data;
-  },
+async function fileFormData(uri: string, name: string, type: string): Promise<FormData> {
+  const form = new FormData();
+  if (Platform.OS === 'web') {
+    form.append('file', await (await fetch(uri)).blob(), name);
+  } else {
+    form.append('file', { uri, name, type } as unknown as Blob);
+  }
+  return form;
+}
 
-  create: async (recipe: Partial<Recipe>): Promise<Recipe> => {
-    const response = await apiClient.post('/recipes', recipe);
-    return response.data;
-  },
-
-  update: async (id: number, recipe: Partial<Recipe>): Promise<Recipe> => {
-    const response = await apiClient.put(`/recipes/${id}`, recipe);
-    return response.data;
-  },
-
-  delete: async (id: number): Promise<void> => {
-    await apiClient.delete(`/recipes/${id}`);
-  },
-
-  search: async (query: string): Promise<Recipe[]> => {
-    const response = await apiClient.get('/recipes', {
-      params: { search: query },
-    });
-    return response.data;
-  },
-};
-
-// ============ CATEGORIES ============
-export const categoriesAPI = {
-  list: async (): Promise<Category[]> => {
-    const response = await apiClient.get('/categories');
-    return response.data;
-  },
-
-  get: async (id: number): Promise<Category> => {
-    const response = await apiClient.get(`/categories/${id}`);
-    return response.data;
-  },
-
-  getRecipes: async (categoryId: number): Promise<Recipe[]> => {
-    const response = await apiClient.get(`/categories/${categoryId}/recipes`);
-    return response.data;
-  },
-};
-
-// ============ FAVORITES ============
-export const favoritesAPI = {
-  list: async (): Promise<Favorite[]> => {
-    const response = await apiClient.get('/favorites');
-    return response.data;
-  },
-
-  add: async (recipeId: number): Promise<Favorite> => {
-    const response = await apiClient.post('/favorites', {
-      recipe_id: recipeId,
-    });
-    return response.data;
-  },
-
-  remove: async (recipeId: number): Promise<void> => {
-    await apiClient.delete(`/favorites/${recipeId}`);
-  },
-
-  isFavorite: async (recipeId: number): Promise<boolean> => {
-    try {
-      const response = await apiClient.get(`/favorites/${recipeId}`);
-      return !!response.data;
-    } catch {
-      return false;
-    }
-  },
-};
-
-// ============ AI CHAT ============
-export const aiAPI = {
-  chat: async (message: string): Promise<string> => {
-    const response = await apiClient.post('/ai/chat', { message });
-    return response.data.response;
-  },
-
-  listModels: async (): Promise<string[]> => {
-    const response = await apiClient.get('/ai/models');
-    return response.data.models;
-  },
-
-  getHealth: async (): Promise<boolean> => {
-    try {
-      const response = await apiClient.get('/ai/health');
-      return response.data.status === 'healthy';
-    } catch {
-      return false;
-    }
-  },
-};
-
-// ============ USERS ============
 export const usersAPI = {
-  getProfile: async (userId: number): Promise<User> => {
-    const response = await apiClient.get(`/users/${userId}`);
-    return response.data;
+  update: async (data: UserUpdate) => (await client.put<User>('/users/me', data)).data,
+  uploadAvatar: async (uri: string, mimeType = 'image/jpeg') => {
+    const name = `avatar.${mimeType.split('/')[1] ?? 'jpg'}`;
+    return (
+      await client.put<User>('/users/me/avatar', await fileFormData(uri, name, mimeType), {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+    ).data;
   },
-
-  updateProfile: async (userId: number, data: Partial<User>): Promise<User> => {
-    const response = await apiClient.put(`/users/${userId}`, data);
-    return response.data;
-  },
-
-  getRecipes: async (userId: number): Promise<Recipe[]> => {
-    const response = await apiClient.get(`/users/${userId}/recipes`);
-    return response.data;
+  deleteMe: async () => {
+    await client.delete('/users/me');
   },
 };
 
-// ============ HEALTH CHECK ============
-export const healthAPI = {
-  check: async (): Promise<boolean> => {
-    try {
-      const response = await apiClient.get('/health');
-      return response.status === 200;
-    } catch {
-      return false;
-    }
-  },
-};
+async function audioFormData(uri: string): Promise<FormData> {
+  const ext = uri.split('?')[0].split('.').pop()?.toLowerCase();
+  const name = `voice.${ext && ext.length <= 4 ? ext : Platform.OS === 'web' ? 'webm' : 'm4a'}`;
+  return fileFormData(uri, name, 'audio/mp4');
+}
 
-export default apiClient;
+export const aiAPI = {
+  chat: async (messages: ChatMessage[], recipeId?: number) =>
+    (
+      await client.post<{ response: string }>(
+        '/ai/chat',
+        { messages, recipe_id: recipeId },
+        { timeout: AI_TIMEOUT },
+      )
+    ).data.response,
+  transcribe: async (uri: string) =>
+    (
+      await client.post<Transcription>('/ai/transcribe', await audioFormData(uri), {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: AI_TIMEOUT,
+      })
+    ).data.text,
+  findRecipe: async (request: string) =>
+    (await client.get<RecipeSearch>('/ai/find-recipe', { params: { q: request } })).data,
+  health: async () => (await client.get<AIHealth>('/ai/health')).data,
+};

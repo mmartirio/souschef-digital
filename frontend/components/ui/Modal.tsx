@@ -1,6 +1,21 @@
-import React from 'react';
-import { View } from 'react-native';
+import React, { ReactNode } from 'react';
+import { Modal as RNModal } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { COLORS } from '../../lib/constants';
 
-export default function Modal() {
-  return <View />;
+interface Props {
+  visible: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}
+
+/** Modal de tela cheia com safe area. */
+export default function Modal({ visible, onClose, children }: Props) {
+  return (
+    <RNModal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaProvider>
+        <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>{children}</SafeAreaView>
+      </SafeAreaProvider>
+    </RNModal>
+  );
 }

@@ -1,449 +1,282 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Alert,
-  ScrollView,
-  ActivityIndicator,
-} from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Speech from 'expo-speech';
+import Loading from '../ui/Loading';
+import VoiceButton from '../ai/VoiceButton';
+import { useVoiceAgent } from '../../hooks/useVoiceAgent';
+import { errorMessage } from '../../lib/api';
+import { buildGuidedPlan } from '../../lib/guided';
+import { localRecipes } from '../../lib/localStore';
+import { describeIngredient } from '../../lib/recipeSpeech';
+import type { Ingredient, RecipeStage } from '../../lib/types';
+import { speak } from '../../lib/speech';
+import { COMMANDS, GuidedCommand, normalize, PHRASES } from '../../lib/voicePhrases';
+import { useVoiceSettings } from '../../lib/voiceSettings';
 import { COLORS, SIZES } from '../../lib/constants';
 
-interface GuidedRecipeProps {
+/** Reconhece comandos curtos ("estou pronto", "próxima etapa", "repete"...). Frases longas não são comandos. */
+const MAX_COMMAND_WORDS = 8; // frases mais longas são conversa, não comando
+
+export function parseCommand(text: string): GuidedCommand | null {
+  const normalized = normalize(text);
+  if (normalized.split(/\s+/).length > MAX_COMMAND_WORDS) return null;
+  const match = (Object.entries(COMMANDS) as [GuidedCommand, RegExp][]).find(([, pattern]) => pattern.test(normalized));
+  return match?.[0] ?? null;
+}
+
+/** O Whisper pontua perguntas com "?"; só elas vão para a IA durante a pausa. */
+const isQuestion = (text: string) => text.trim().endsWith('?');
+
+interface GuidedStep {
+  label: string;
+  /** Texto exibido na tela. */
+  text: string;
+  /** Texto falado pelo assistente. */
+  speech: string;
+}
+
+const bullets = (ingredients: Ingredient[]) => ingredients.map((i) => `• ${describeIngredient(i)}`).join('\n');
+const numbered = (steps: string[]) => steps.map((step, n) => `${n + 1}. ${step}`).join('\n');
+
+/**
+ * Roteiro do modo guiado, com uma pausa ao fim de cada item:
+ * - para cada componente (ex.: massa, recheio, cobertura) ou para a receita inteira, se tiver
+ *   um só preparo: mise en place com os ingredientes dele e cada fase (preparo, cocção, descanso);
+ * - por fim, o preparo final (montagem, finalização) de uma vez.
+ */
+function buildSteps(stages: RecipeStage[]): GuidedStep[] {
+  const multiple = stages.filter((stage) => !stage.final).length > 1;
+
+  return stages.flatMap((stage): GuidedStep[] => {
+    const miseEnPlace = stage.ingredients.length
+      ? PHRASES.miseEnPlace(stage.ingredients.map(describeIngredient).join('; ')) + ' '
+      : '';
+
+    if (stage.final) {
+      const steps = stage.phases.flatMap((phase) => phase.steps);
+      return [
+        {
+          label: stage.title,
+          text: [bullets(stage.ingredients), numbered(steps)].filter(Boolean).join('\n\n'),
+          speech: PHRASES.finalPrep([miseEnPlace + steps[0], ...steps.slice(1)]),
+        },
+      ];
+    }
+
+    const prefix = multiple ? `${stage.title} · ` : '';
+    const intro = multiple ? PHRASES.component(stage.title) + ' ' : '';
+    const items: GuidedStep[] = stage.phases.map((phase) => ({
+      label: prefix + phase.name,
+      text: numbered(phase.steps),
+      speech: PHRASES.phase(phase.name, phase.steps),
+    }));
+    if (stage.ingredients.length) {
+      items.unshift({ label: `${prefix}Mise en place`, text: bullets(stage.ingredients), speech: miseEnPlace.trim() });
+    }
+    if (items.length) items[0].speech = intro + items[0].speech;
+    return items;
+  });
+}
+
+interface Props {
   recipeId: number;
-  recipeName: string;
   onClose: () => void;
 }
 
-interface Step {
-  index: number;
-  text: string;
-  completed: boolean;
-}
+export default function GuidedRecipeMode({ recipeId, onClose }: Props) {
+  const [title, setTitle] = useState('');
+  const [steps, setSteps] = useState<GuidedStep[]>([]);
+  const [index, setIndex] = useState(0);
+  const indexRef = useRef(0);
+  const stepsRef = useRef<GuidedStep[]>([]);
+  const { voiceId } = useVoiceSettings();
+  const say = useCallback((text: string) => speak(text, voiceId), [voiceId]);
 
-export default function GuidedRecipeMode({ recipeId, recipeName, onClose }: GuidedRecipeProps) {
-  const [steps, setSteps] = useState<Step[]>([]);
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [listeningForNext, setListeningForNext] = useState(false);
+  /** Lê o passo e pausa, pedindo confirmação para seguir. */
+  /** Lê a etapa; `prompt` acrescenta o aviso "quando estiver pronto…" (não é repetido no "repetir"). */
+  const goTo = useCallback(
+    async (i: number, prompt = true) => {
+      indexRef.current = i;
+      setIndex(i);
+      const isLast = i === stepsRef.current.length - 1;
+      await say(stepsRef.current[i].speech);
+      if (prompt) await say(isLast ? PHRASES.lastReadyPrompt : PHRASES.readyPrompt);
+    },
+    [say],
+  );
 
-  // Carregar passos da receita
-  useEffect(() => {
-    loadRecipeSteps();
-  }, [recipeId]);
+  const finish = useCallback(async () => {
+    await say(PHRASES.finished);
+    onClose();
+  }, [onClose, say]);
 
-  // Reproduzir passo atual automaticamente
-  useEffect(() => {
-    if (steps.length > 0 && !loading) {
-      speakCurrentStep();
-    }
-  }, [currentStepIndex, steps]);
-
-  const loadRecipeSteps = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`http://192.168.0.15:8000/api/ai/recipes/${recipeId}/steps`);
-      
-      if (!response.ok) {
-        throw new Error('Erro ao carregar passos');
+  /** Executa o comando. Retorna false quando a condução terminou (receita concluída ou saída). */
+  const runCommand = useCallback(
+    async (command: GuidedCommand): Promise<boolean> => {
+      const i = indexRef.current;
+      const last = stepsRef.current.length - 1;
+      if (command === 'exit' || (command === 'next' && i === last)) {
+        await (command === 'exit' ? onClose() : finish());
+        return false;
       }
+      if (command === 'next') await goTo(i + 1);
+      if (command === 'previous') await goTo(Math.max(0, i - 1));
+      if (command === 'repeat') await goTo(i, false); // relê e fica esperando em silêncio
+      return true;
+    },
+    [goTo, finish, onClose],
+  );
 
-      const data = await response.json();
-      
-      // Converter passos em objetos com estado
-      const formattedSteps = data.steps.map((text: string, index: number) => ({
-        index,
-        text,
-        completed: false,
-      }));
+  /**
+   * Pausa entre passos: perguntas vão para a IA (sem avançar); comandos são executados;
+   * qualquer outra fala é ignorada até o usuário dizer que está pronto.
+   * A pergunta vem primeiro para "quanto falta para ficar pronto?" não virar comando.
+   */
+  const onCommand = useCallback(
+    async (text: string) => {
+      // Comando primeiro: "Pode repetir?" é um pedido para repetir, não uma pergunta para a IA.
+      const command = parseCommand(text);
+      if (command) {
+        await runCommand(command);
+        return true;
+      }
+      return !isQuestion(text);
+    },
+    [runCommand],
+  );
 
-      setSteps(formattedSteps);
-      setCurrentStepIndex(0);
-    } catch (error) {
-      console.error('Erro:', error);
-      Alert.alert('Erro', 'Não foi possível carregar os passos da receita');
-      onClose();
-    } finally {
-      setLoading(false);
-    }
+  const agent = useVoiceAgent({ recipeId, onCommand });
+  const lastAnswer = [...agent.messages].reverse().find((m) => m.role === 'assistant');
+
+  useEffect(() => {
+    localRecipes
+      .get(recipeId)
+      .then(async (recipe) => {
+        if (!recipe) throw new Error('Receita não encontrada');
+        const guided = buildSteps(buildGuidedPlan(recipe));
+        stepsRef.current = guided;
+        setTitle(recipe.title);
+        setSteps(guided);
+        await say(PHRASES.guidedIntro);
+        await goTo(0);
+        void agent.talk(true);
+      })
+      .catch((e) => {
+        Alert.alert('Erro', errorMessage(e, 'Não foi possível carregar os passos'));
+        onClose();
+      });
+  }, [recipeId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Botões da tela fazem o mesmo que a voz e, em seguida, o assistente volta a ouvir sozinho. */
+  const press = async (command: GuidedCommand) => {
+    agent.cancel();
+    if (await runCommand(command)) void agent.talk(true);
   };
 
-  const speakCurrentStep = () => {
-    if (steps.length === 0) return;
+  if (!steps.length) return <Loading />;
 
-    const currentStep = steps[currentStepIndex];
-    const stepNumber = currentStepIndex + 1;
-    const totalSteps = steps.length;
-
-    const textToSpeak = `Passo ${stepNumber} de ${totalSteps}. ${currentStep.text}`;
-
-    setIsSpeaking(true);
-    
-    Speech.speak(textToSpeak, {
-      language: 'pt-BR',
-      pitch: 1.0,
-      rate: 0.85,
-      onDone: () => {
-        setIsSpeaking(false);
-        // Aguardar o usuário dizer próximo
-        startListeningForNext();
-      },
-      onStopped: () => setIsSpeaking(false),
-      onError: () => {
-        setIsSpeaking(false);
-        Alert.alert('Erro', 'Não foi possível reproduzir o áudio');
-      },
-    });
-  };
-
-  const startListeningForNext = () => {
-    // TODO: Implementar reconhecimento de voz para "próximo"
-    // Por enquanto, usar botão
-    setListeningForNext(true);
-  };
-
-  const goToNextStep = () => {
-    if (currentStepIndex < steps.length - 1) {
-      // Marcar passo atual como completo
-      const updatedSteps = [...steps];
-      updatedSteps[currentStepIndex].completed = true;
-      setSteps(updatedSteps);
-
-      // Ir para próximo
-      setCurrentStepIndex(currentStepIndex + 1);
-      setListeningForNext(false);
-    } else {
-      // Última etapa
-      completedRecipe();
-    }
-  };
-
-  const goToPreviousStep = () => {
-    if (currentStepIndex > 0) {
-      setCurrentStepIndex(currentStepIndex - 1);
-      setListeningForNext(false);
-    }
-  };
-
-  const completedRecipe = () => {
-    Speech.speak('Parabéns! Você concluiu a receita!', {
-      language: 'pt-BR',
-    });
-    
-    setTimeout(() => {
-      Alert.alert(
-        'Receita Concluída! 🎉',
-        'Você terminou de preparar a receita. Bom apetite!',
-        [{ text: 'OK', onPress: onClose }]
-      );
-    }, 500);
-  };
-
-  const stopSpeaking = () => {
-    if (isSpeaking) {
-      Speech.stop();
-      setIsSpeaking(false);
-    }
-  };
-
-  const repeatStep = () => {
-    speakCurrentStep();
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-      </View>
-    );
-  }
-
-  if (steps.length === 0) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>Nenhum passo encontrado</Text>
-      </View>
-    );
-  }
-
-  const currentStep = steps[currentStepIndex];
-  const stepNumber = currentStepIndex + 1;
-  const totalSteps = steps.length;
-  const progress = (stepNumber / totalSteps) * 100;
+  const isLast = index === steps.length - 1;
 
   return (
     <View style={styles.container}>
-      {/* Cabeçalho */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={onClose}>
+        <TouchableOpacity onPress={onClose} hitSlop={10}>
           <Ionicons name="close" size={28} color={COLORS.text} />
         </TouchableOpacity>
-        <Text style={styles.recipeName}>{recipeName}</Text>
-        <Text style={styles.stepCounter}>
-          {stepNumber}/{totalSteps}
-        </Text>
+        <Text style={styles.title} numberOfLines={1}>{title}</Text>
+        <Text style={styles.counter}>{index + 1}/{steps.length}</Text>
+      </View>
+      <View style={styles.progress}>
+        <View style={[styles.progressBar, { width: `${((index + 1) / steps.length) * 100}%` }]} />
       </View>
 
-      {/* Barra de progresso */}
-      <View style={styles.progressContainer}>
-        <View
-          style={[
-            styles.progressBar,
-            { width: `${progress}%` },
-          ]}
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.stepLabel}>{steps[index].label}</Text>
+        <Text style={styles.stepText}>{steps[index].text}</Text>
+        <Text style={styles.readyHint}>
+          {isLast ? 'Diga "pronto" ou "terminado" para concluir.' : 'Diga "pronto" ou "próximo" para continuar.'}
+          {' Diga "repetir" quantas vezes quiser para ouvir de novo.'}
+        </Text>
+        {lastAnswer && (
+          <View style={styles.answer}>
+            <Ionicons name="chatbubble-ellipses-outline" size={18} color={COLORS.secondary} />
+            <Text style={styles.answerText}>{lastAnswer.content}</Text>
+          </View>
+        )}
+      </ScrollView>
+
+      <View style={styles.voice}>
+        <VoiceButton
+          status={agent.status}
+          onPress={() => (agent.status === 'idle' ? agent.talk(true) : agent.cancel())}
         />
       </View>
 
-      {/* Conteúdo do passo */}
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        {/* Número do passo */}
-        <View style={styles.stepNumberContainer}>
-          <Text style={styles.stepNumber}>Passo {stepNumber}</Text>
-        </View>
-
-        {/* Texto do passo */}
-        <View style={styles.stepTextContainer}>
-          <Ionicons
-            name={isSpeaking ? "volume-high" : "chatbubble-ellipses"}
-            size={24}
-            color={COLORS.primary}
-            style={{ marginBottom: 12 }}
-          />
-          <Text style={styles.stepText}>{currentStep.text}</Text>
-        </View>
-
-        {/* Lista de passos completados */}
-        <View style={styles.completedStepsContainer}>
-          <Text style={styles.completedStepsTitle}>Progresso:</Text>
-          {steps.map((step, index) => (
-            <View key={index} style={styles.completedStepItem}>
-              <Ionicons
-                name={step.completed ? "checkmark-circle" : "ellipse-outline"}
-                size={20}
-                color={step.completed ? COLORS.success : COLORS.textSecondary}
-              />
-              <Text
-                style={[
-                  styles.completedStepText,
-                  index === currentStepIndex && styles.currentStepHighlight,
-                  step.completed && styles.completedStepText,
-                ]}
-              >
-                Passo {index + 1}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </ScrollView>
-
-      {/* Controles */}
       <View style={styles.controls}>
-        {/* Botão repetir */}
-        <TouchableOpacity
-          style={styles.controlButton}
-          onPress={repeatStep}
-          disabled={isSpeaking}
-        >
-          <Ionicons
-            name="repeat"
-            size={24}
-            color={isSpeaking ? COLORS.textSecondary : COLORS.primary}
-          />
-          <Text style={styles.controlLabel}>Repetir</Text>
-        </TouchableOpacity>
-
-        {/* Botão anterior */}
-        <TouchableOpacity
-          style={[styles.controlButton, currentStepIndex === 0 && styles.disabledButton]}
-          onPress={goToPreviousStep}
-          disabled={currentStepIndex === 0}
-        >
-          <Ionicons
-            name="chevron-back"
-            size={24}
-            color={currentStepIndex === 0 ? COLORS.textSecondary : COLORS.primary}
-          />
-          <Text style={styles.controlLabel}>Anterior</Text>
-        </TouchableOpacity>
-
-        {/* Botão próximo */}
-        <TouchableOpacity
-          style={[styles.controlButton, styles.nextButton]}
-          onPress={goToNextStep}
-        >
-          <Ionicons
-            name={stepNumber === totalSteps ? "checkmark" : "chevron-forward"}
-            size={24}
-            color={COLORS.background}
-          />
-          <Text style={[styles.controlLabel, { color: COLORS.background }]}>
-            {stepNumber === totalSteps ? 'Finalizar' : 'Próximo'}
-          </Text>
-        </TouchableOpacity>
+        <Control icon="chevron-back" label="Anterior" onPress={() => press('previous')} disabled={index === 0} />
+        <Control icon="repeat" label="Repetir" onPress={() => press('repeat')} />
+        <Control
+          icon={isLast ? 'checkmark' : 'chevron-forward'}
+          label={isLast ? 'Finalizar' : 'Próxima'}
+          onPress={() => press('next')}
+          primary
+        />
       </View>
-
-      {/* Status de escuta */}
-      {listeningForNext && (
-        <View style={styles.listeningIndicator}>
-          <Ionicons name="mic" size={20} color={COLORS.primary} />
-          <Text style={styles.listeningText}>Aguardando 'próximo'...</Text>
-        </View>
-      )}
     </View>
   );
 }
 
+interface ControlProps {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+}
+
+function Control({ icon, label, onPress, disabled, primary }: ControlProps) {
+  const color = primary ? COLORS.background : COLORS.text;
+  return (
+    <TouchableOpacity
+      style={[styles.control, primary && styles.controlPrimary, disabled && { opacity: 0.4 }]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <Ionicons name={icon} size={22} color={color} />
+      <Text style={[styles.controlLabel, { color }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  header: {
+  container: { flex: 1, backgroundColor: COLORS.background },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: SIZES.padding },
+  title: { flex: 1, fontSize: 18, fontWeight: '600', color: COLORS.text },
+  counter: { fontSize: 14, color: COLORS.textSecondary },
+  progress: { height: 4, backgroundColor: COLORS.border },
+  progressBar: { height: '100%', backgroundColor: COLORS.secondary },
+  content: { padding: SIZES.padding, gap: 16 },
+  stepLabel: { fontSize: 24, fontWeight: '700', color: COLORS.text },
+  stepText: { fontSize: 20, lineHeight: 30, color: COLORS.text },
+  readyHint: { fontSize: 14, color: COLORS.textSecondary, fontStyle: 'italic' },
+  answer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: 16,
-    backgroundColor: COLORS.cardBg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  recipeName: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginHorizontal: 16,
-  },
-  stepCounter: {
-    fontSize: 14,
-    color: COLORS.textSecondary,
-    backgroundColor: COLORS.background,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  progressContainer: {
-    height: 4,
-    backgroundColor: COLORS.border,
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: COLORS.primary,
-  },
-  content: {
-    flex: 1,
-  },
-  contentContainer: {
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: 24,
-  },
-  stepNumberContainer: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: SIZES.radius,
-    marginBottom: 20,
-  },
-  stepNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: COLORS.background,
-  },
-  stepTextContainer: {
-    backgroundColor: COLORS.cardBg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: SIZES.radius,
-    padding: 16,
-    marginBottom: 24,
-  },
-  stepText: {
-    fontSize: 16,
-    color: COLORS.text,
-    lineHeight: 24,
-  },
-  completedStepsContainer: {
-    backgroundColor: COLORS.cardBg,
-    borderRadius: SIZES.radius,
-    padding: 12,
-  },
-  completedStepsTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 12,
-  },
-  completedStepItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  completedStepText: {
-    marginLeft: 12,
-    fontSize: 14,
-    color: COLORS.textSecondary,
-  },
-  currentStepHighlight: {
-    color: COLORS.primary,
-    fontWeight: '600',
-  },
-  controls: {
-    flexDirection: 'row',
-    padding: SIZES.padding,
-    backgroundColor: COLORS.cardBg,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
     gap: 8,
+    padding: 12,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.cardBg,
   },
-  controlButton: {
+  answerText: { flex: 1, fontSize: 15, lineHeight: 21, color: COLORS.text },
+  voice: { alignItems: 'center', paddingVertical: 12 },
+  controls: { flexDirection: 'row', gap: 8, padding: SIZES.padding },
+  control: {
     flex: 1,
-    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 12,
     borderRadius: SIZES.radius,
-    backgroundColor: COLORS.background,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  nextButton: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-  controlLabel: {
-    fontSize: 12,
-    color: COLORS.primary,
-    marginTop: 4,
-    fontWeight: '500',
-  },
-  listeningIndicator: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    backgroundColor: COLORS.primary,
-  },
-  listeningText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: COLORS.background,
-    fontWeight: '500',
-  },
-  errorText: {
-    fontSize: 16,
-    color: COLORS.text,
-    textAlign: 'center',
-  },
+  controlPrimary: { backgroundColor: COLORS.text, borderColor: COLORS.text },
+  controlLabel: { fontSize: 12, marginTop: 4, fontWeight: '500' },
 });

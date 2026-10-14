@@ -1,82 +1,25 @@
 import React from 'react';
-import { Tabs } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../../lib/constants';
+import { Redirect, Tabs } from 'expo-router';
+import Loading from '../../components/ui/Loading';
+import { BottomBar, hidden, tabBarOptions } from '../../components/layout/TabBar';
+import { useAuth } from '../../lib/auth';
 
 export default function TabsLayout() {
+  const { user, loading } = useAuth();
+  if (loading) return <Loading />;
+  if (!user) return <Redirect href="/login" />;
+
+  // A barra inferior (BottomBar) decide os botões; as rotas ficam fora da barra padrão.
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: COLORS.text,
-        tabBarInactiveTintColor: COLORS.textSecondary,
-        tabBarStyle: {
-          backgroundColor: COLORS.background,
-          borderTopWidth: 1,
-          borderTopColor: COLORS.border,
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 8,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
-        },
-        headerStyle: {
-          backgroundColor: COLORS.background,
-        },
-        headerTintColor: COLORS.text,
-        headerTitleStyle: {
-          fontWeight: 'bold',
-        },
-        headerShadowVisible: false,
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Início',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home-outline" size={size} color={color} />
-          ),
-          headerShown: false,
-        }}
-      />
-      <Tabs.Screen
-        name="recipes/index"
-        options={{
-          title: 'Receitas',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="restaurant-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="categories/index"
-        options={{
-          title: 'Categorias',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="grid-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="ai-assistant/index"
-        options={{
-          title: 'Assistente',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="chatbubbles-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile/index"
-        options={{
-          title: 'Perfil',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
-          ),
-        }}
-      />
+    <Tabs screenOptions={tabBarOptions} tabBar={(props) => <BottomBar {...props} />}>
+      <Tabs.Screen name="recipes/index" options={{ title: 'Receitas' }} />
+      <Tabs.Screen name="favorites/index" options={{ title: 'Favoritos' }} />
+      <Tabs.Screen name="categories/index" options={{ ...hidden, title: 'Categorias' }} />
+      <Tabs.Screen name="ai-assistant/index" options={{ ...hidden, title: 'Assistente' }} />
+      <Tabs.Screen name="assistant-settings/index" options={{ ...hidden, title: 'Assistente de voz' }} />
+      <Tabs.Screen name="profile/index" options={{ ...hidden, title: 'Perfil' }} />
+      <Tabs.Screen name="recipes/[id]" options={{ ...hidden, title: 'Receita' }} />
+      <Tabs.Screen name="recipes/create" options={{ ...hidden, title: 'Nova receita' }} />
     </Tabs>
   );
 }

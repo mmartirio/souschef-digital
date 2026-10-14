@@ -4,39 +4,59 @@
     "slug": "souschef-digital",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/adaptive-icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.souschef.digital"
     },
     "android": {
-        "permissions": ["RECORD_AUDIO"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.souschef.digital"
+      "package": "com.souschef.digital",
+      "allowBackup": false
     },
-      "ios": {
-        "infoPlist": {
-          "NSMicrophoneUsageDescription": "Precisamos do microfone para você falar suas solicitações ao assistente de receitas."
-        },
-        "supportsTablet": true,
-        "bundleIdentifier": "com.souschef.digital"
-      },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-router",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Precisamos do microfone para você conversar com o assistente de receitas."
+        }
+      ],
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "cover",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Precisamos acessar suas fotos para você escolher a foto do perfil.",
+          "cameraPermission": false
+        }
+      ],
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
+      "expo-secure-store",
+      "./plugins/withNetworkSecurity",
+      "./plugins/withApkName"
     ],
     "scheme": "souschef"
   }

@@ -1,460 +1,208 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  SafeAreaView,
-  StatusBar,
-  KeyboardAvoidingView,
-  Platform,
-  TouchableOpacity,
-  Alert,
-  FlatList,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import Input from '../../../components/ui/Input';
+import React, { useEffect, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
-import { COLORS, SIZES } from '../../../lib/constants';
+import Input from '../../../components/ui/Input';
+import Loading from '../../../components/ui/Loading';
+import IngredientItem from '../../../components/recipes/IngredientItem';
+import RecipeWritingGuide from '../../../components/recipes/RecipeWritingGuide';
+import { errorMessage } from '../../../lib/api';
+import { useAuth } from '../../../lib/auth';
+import { localRecipes } from '../../../lib/localStore';
+import { COLORS, DIFFICULTIES, SIZES } from '../../../lib/constants';
+import type { Difficulty, Ingredient, Recipe } from '../../../lib/types';
 
-export default function CreateRecipe() {
+const toInt = (value: string) => (value.trim() ? parseInt(value, 10) || null : null);
+const toText = (value: number | null | undefined) => (value == null ? '' : String(value));
+
+const EMPTY_FORM = { title: '', description: '', instructions: '', prepTime: '', cookTime: '', servings: '', country: '' };
+
+const formFrom = (recipe: Recipe) => ({
+  title: recipe.title,
+  description: recipe.description ?? '',
+  instructions: recipe.instructions,
+  prepTime: toText(recipe.prep_time),
+  cookTime: toText(recipe.cook_time),
+  servings: toText(recipe.servings),
+  country: recipe.country ?? '',
+});
+
+/** Cria uma receita, ou edita a receita `?id=` (só o autor pode salvar). */
+export default function RecipeForm() {
   const router = useRouter();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [prepTime, setPrepTime] = useState('');
-  const [cookTime, setCookTime] = useState('');
-  const [servings, setServings] = useState('1');
-  const [difficulty, setDifficulty] = useState('facil');
-  const [instructions, setInstructions] = useState('');
-  const [ingredients, setIngredients] = useState([]);
-  const [currentIngredient, setCurrentIngredient] = useState('');
-  const [currentQuantity, setCurrentQuantity] = useState('');
-  const [currentUnit, setCurrentUnit] = useState('g');
-  const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState({});
+  const navigation = useNavigation();
+  const { user } = useAuth();
+  const editingId = Number(useLocalSearchParams<{ id?: string }>().id) || null;
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [difficulty, setDifficulty] = useState<Difficulty>('easy');
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [ingredient, setIngredient] = useState({ name: '', quantity: '' });
+  const [loading, setLoading] = useState(editingId !== null);
+  const [saving, setSaving] = useState(false);
 
-  const units = ['g', 'ml', 'colher', 'xícara', 'unidade', 'litro'];
-  const difficulties = ['facil', 'medio', 'dificil'];
-
-  const addIngredient = () => {
-    if (!currentIngredient || !currentQuantity) {
-      Alert.alert('Erro', 'Preencha o ingrediente e a quantidade');
+  useEffect(() => {
+    navigation.setOptions({ title: editingId ? 'Editar receita' : 'Nova receita' });
+    if (!editingId) {
+      setForm(EMPTY_FORM);
+      setDifficulty('easy');
+      setIngredients([]);
       return;
     }
-    setIngredients([
-      ...ingredients,
-      {
-        name: currentIngredient,
-        quantity: currentQuantity,
-        unit: currentUnit,
-      },
-    ]);
-    setCurrentIngredient('');
-    setCurrentQuantity('');
-  };
-
-  const removeIngredient = (index) => {
-    setIngredients(ingredients.filter((_, i) => i !== index));
-  };
-
-  const validateForm = () => {
-    const newErrors = {};
-
-    if (!title) newErrors.title = 'Título é obrigatório';
-    if (!description) newErrors.description = 'Descrição é obrigatória';
-    if (!prepTime) newErrors.prepTime = 'Tempo de preparo é obrigatório';
-    if (!instructions) newErrors.instructions = 'Modo de preparo é obrigatório';
-    if (ingredients.length === 0)
-      newErrors.ingredients = 'Adicione pelo menos um ingrediente';
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleCreateRecipe = async () => {
-    if (!validateForm()) return;
-
     setLoading(true);
+    localRecipes
+      .get(editingId)
+      .then((recipe) => {
+        if (!recipe) throw new Error('Receita não encontrada');
+        setForm(formFrom(recipe));
+        setDifficulty(recipe.difficulty ?? 'easy');
+        setIngredients(recipe.ingredients.map(({ name, quantity }) => ({ name, quantity })));
+      })
+      .catch((e) => {
+        Alert.alert('Erro', errorMessage(e, 'Receita não encontrada'));
+        router.back();
+      })
+      .finally(() => setLoading(false));
+  }, [editingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (field: keyof typeof form) => (value: string) => setForm({ ...form, [field]: value });
+
+  const addIngredient = () => {
+    if (!ingredient.name.trim()) return;
+    setIngredients([...ingredients, { name: ingredient.name.trim(), quantity: ingredient.quantity.trim() || null }]);
+    setIngredient({ name: '', quantity: '' });
+  };
+
+  const save = async () => {
+    if (!form.title.trim() || !form.instructions.trim()) {
+      Alert.alert('Atenção', 'Título e modo de preparo são obrigatórios.');
+      return;
+    }
+    setSaving(true);
+    const data = {
+      title: form.title.trim(),
+      description: form.description.trim() || null,
+      instructions: form.instructions.trim(),
+      prep_time: toInt(form.prepTime),
+      cook_time: toInt(form.cookTime),
+      servings: toInt(form.servings),
+      difficulty,
+      country: form.country.trim() || null,
+      ingredients,
+    };
     try {
-      const recipeData = {
-        title,
-        description,
-        prep_time: parseInt(prepTime),
-        cook_time: cookTime ? parseInt(cookTime) : 0,
-        servings: parseInt(servings),
-        difficulty,
-        instructions,
-        ingredients,
-      };
-
-      const response = await fetch('http://localhost:8000/recipes', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // TODO: Adicionar token de autenticação
-        },
-        body: JSON.stringify(recipeData),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        Alert.alert('Sucesso', 'Receita criada com sucesso!', [
-          {
-            text: 'OK',
-            onPress: () => router.replace(`/(tabs)/recipes/${data.id}`),
-          },
-        ]);
-      } else {
-        Alert.alert('Erro', 'Falha ao criar receita');
-      }
-    } catch (error) {
-      Alert.alert('Erro', 'Erro ao conectar com o servidor');
-      console.error(error);
+      // Salva no banco local; o envio ao servidor acontece em segundo plano (lib/sync.ts).
+      const recipe = editingId
+        ? await localRecipes.update(editingId, data)
+        : await localRecipes.create(data, user!.id);
+      router.replace(`/recipes/${recipe.id}`);
+    } catch (e) {
+      Alert.alert('Erro', errorMessage(e, editingId ? 'Falha ao salvar a receita' : 'Falha ao criar receita'));
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
+  if (loading) return <Loading />;
+
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <RecipeWritingGuide />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
-      >
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()}>
-              <Ionicons name="arrow-back" size={24} color={COLORS.text} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Nova Receita</Text>
-            <View style={{ width: 24 }} />
+        <Card>
+          <Input label="Título" placeholder="Ex: Bolo de Chocolate" value={form.title} onChangeText={set('title')} />
+          <Input label="Descrição" value={form.description} onChangeText={set('description')} multiline />
+          <Input label="País de criação (opcional)" placeholder="Ex: Brasil" value={form.country} onChangeText={set('country')} />
+        </Card>
+
+        <Card>
+          <View style={styles.row}>
+            <View style={styles.flex}>
+              <Input label="Preparo (min)" value={form.prepTime} onChangeText={set('prepTime')} keyboardType="numeric" />
+            </View>
+            <View style={styles.flex}>
+              <Input label="Cozimento (min)" value={form.cookTime} onChangeText={set('cookTime')} keyboardType="numeric" />
+            </View>
+            <View style={styles.flex}>
+              <Input label="Porções" value={form.servings} onChangeText={set('servings')} keyboardType="numeric" />
+            </View>
           </View>
 
-          {/* Title Section */}
-          <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Informações Básicas</Text>
-            <Input
-              label="Título da Receita"
-              placeholder="Ex: Bolo de Chocolate"
-              value={title}
-              onChangeText={setTitle}
-              error={errors.title}
-            />
-            <Input
-              label="Descrição"
-              placeholder="Descreva sua receita..."
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              numberOfLines={3}
-              error={errors.description}
-            />
-          </Card>
-
-          {/* Time and Servings */}
-          <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Tempo e Porções</Text>
-            <View style={styles.row}>
-              <View style={styles.halfInput}>
-                <Input
-                  label="Tempo de Preparo (min)"
-                  placeholder="30"
-                  value={prepTime}
-                  onChangeText={setPrepTime}
-                  keyboardType="numeric"
-                  error={errors.prepTime}
-                />
-              </View>
-              <View style={styles.halfInput}>
-                <Input
-                  label="Tempo de Cozimento (min)"
-                  placeholder="45"
-                  value={cookTime}
-                  onChangeText={setCookTime}
-                  keyboardType="numeric"
-                />
-              </View>
-            </View>
-            <Input
-              label="Porções"
-              placeholder="4"
-              value={servings}
-              onChangeText={setServings}
-              keyboardType="numeric"
-            />
-          </Card>
-
-          {/* Difficulty */}
-          <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Dificuldade</Text>
-            <View style={styles.difficultyButtons}>
-              {difficulties.map((diff) => (
-                <TouchableOpacity
-                  key={diff}
-                  style={[
-                    styles.difficultyButton,
-                    difficulty === diff && styles.difficultyButtonActive,
-                  ]}
-                  onPress={() => setDifficulty(diff)}
-                >
-                  <Text
-                    style={[
-                      styles.difficultyButtonText,
-                      difficulty === diff && styles.difficultyButtonTextActive,
-                    ]}
-                  >
-                    {diff.charAt(0).toUpperCase() + diff.slice(1)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </Card>
-
-          {/* Ingredients */}
-          <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Ingredientes</Text>
-            <Input
-              label="Nome do Ingrediente"
-              placeholder="Ex: Farinha de Trigo"
-              value={currentIngredient}
-              onChangeText={setCurrentIngredient}
-            />
-            <View style={styles.ingredientRow}>
-              <View style={styles.ingredientQuantity}>
-                <Input
-                  label="Quantidade"
-                  placeholder="2"
-                  value={currentQuantity}
-                  onChangeText={setCurrentQuantity}
-                  keyboardType="decimal-pad"
-                />
-              </View>
-              <View style={styles.ingredientUnit}>
-                <Text style={styles.label}>Unidade</Text>
-                <TouchableOpacity
-                  style={styles.unitSelect}
-                  onPress={() => {
-                    // TODO: Implementar picker de unidades
-                    Alert.alert('Unidades', `Selecionado: ${currentUnit}`);
-                  }}
-                >
-                  <Text style={styles.unitText}>{currentUnit}</Text>
-                  <Ionicons
-                    name="chevron-down"
-                    size={20}
-                    color={COLORS.text}
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <Button
-              title="ADICIONAR INGREDIENTE"
-              onPress={addIngredient}
-              variant="outline"
-              icon="add-outline"
-            />
-
-            {/* Ingredients List */}
-            {ingredients.length > 0 && (
-              <View style={styles.ingredientsList}>
-                {ingredients.map((ingredient, index) => (
-                  <View key={index} style={styles.ingredientItem}>
-                    <View style={styles.ingredientContent}>
-                      <Text style={styles.ingredientName}>
-                        {ingredient.name}
-                      </Text>
-                      <Text style={styles.ingredientQuantity}>
-                        {ingredient.quantity} {ingredient.unit}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => removeIngredient(index)}
-                    >
-                      <Ionicons
-                        name="trash-outline"
-                        size={20}
-                        color="#FF3B30"
-                      />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
-            {errors.ingredients && (
-              <Text style={styles.errorText}>{errors.ingredients}</Text>
-            )}
-          </Card>
-
-          {/* Instructions */}
-          <Card style={styles.section}>
-            <Text style={styles.sectionTitle}>Modo de Preparo</Text>
-            <Input
-              label="Instruções"
-              placeholder="Descreva o passo a passo..."
-              value={instructions}
-              onChangeText={setInstructions}
-              multiline
-              numberOfLines={6}
-              error={errors.instructions}
-            />
-          </Card>
-
-          {/* Submit Button */}
-          <View style={styles.submitContainer}>
-            <Button
-              title="CRIAR RECEITA"
-              onPress={handleCreateRecipe}
-              loading={loading}
-              variant="primary"
-            />
+          <Text style={styles.label}>Dificuldade</Text>
+          <View style={styles.row}>
+            {(Object.keys(DIFFICULTIES) as Difficulty[]).map((value) => (
+              <TouchableOpacity
+                key={value}
+                style={[styles.chip, difficulty === value && { backgroundColor: DIFFICULTIES[value].color }]}
+                onPress={() => setDifficulty(value)}
+              >
+                <Text style={[styles.chipText, difficulty === value && styles.chipTextActive]}>
+                  {DIFFICULTIES[value].label}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
+        </Card>
 
-          <View style={{ height: 20 }} />
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+        <Card>
+          <Text style={styles.label}>Ingredientes</Text>
+          <View style={styles.row}>
+            <View style={{ flex: 2 }}>
+              <Input
+                placeholder="Ingrediente"
+                value={ingredient.name}
+                onChangeText={(name) => setIngredient({ ...ingredient, name })}
+              />
+            </View>
+            <View style={styles.flex}>
+              <Input
+                placeholder="2 xícaras"
+                value={ingredient.quantity}
+                onChangeText={(quantity) => setIngredient({ ...ingredient, quantity })}
+              />
+            </View>
+          </View>
+          <Button title="ADICIONAR" icon="add-outline" variant="outline" onPress={addIngredient} />
+          {ingredients.map((item, index) => (
+            <IngredientItem
+              key={index}
+              ingredient={item}
+              onRemove={() => setIngredients(ingredients.filter((_, i) => i !== index))}
+            />
+          ))}
+        </Card>
+
+        <Card>
+          <Input
+            label="Modo de preparo (veja o guia no topo)"
+            placeholder={'## Massa\n1. Misture...\n2. Asse...\n## Cobertura\n1. Derreta...'}
+            value={form.instructions}
+            onChangeText={set('instructions')}
+            multiline
+          />
+        </Card>
+
+        <Button title={editingId ? 'SALVAR ALTERAÇÕES' : 'SALVAR RECEITA'} onPress={save} loading={saving} />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  content: { padding: SIZES.padding, gap: 16, backgroundColor: COLORS.background },
+  row: { flexDirection: 'row', gap: 8 },
+  flex: { flex: 1 },
+  label: { fontSize: 14, fontWeight: '600', color: COLORS.text, marginBottom: 8 },
+  chip: {
     flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingVertical: 16,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: SIZES.padding,
-    paddingBottom: 16,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: COLORS.text,
-  },
-  section: {
-    marginHorizontal: SIZES.padding,
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.text,
-    marginBottom: 16,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  halfInput: {
-    flex: 1,
-  },
-  difficultyButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  difficultyButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 8,
-    borderWidth: 2,
-    borderColor: COLORS.border,
-    alignItems: 'center',
-  },
-  difficultyButtonActive: {
-    backgroundColor: COLORS.secondary,
-    borderColor: COLORS.secondary,
-  },
-  difficultyButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.text,
-  },
-  difficultyButtonTextActive: {
-    color: '#000',
-  },
-  ingredientRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  ingredientQuantity: {
-    flex: 1,
-  },
-  ingredientUnit: {
-    flex: 1,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.text,
-    marginBottom: 8,
-  },
-  unitSelect: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 50,
     borderWidth: 1,
     borderColor: COLORS.border,
+    backgroundColor: COLORS.cardBg,
   },
-  unitText: {
-    fontSize: 16,
-    color: COLORS.text,
-  },
-  ingredientsList: {
-    marginTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 16,
-  },
-  ingredientItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  ingredientContent: {
-    flex: 1,
-  },
-  ingredientName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.text,
-  },
-  ingredientQuantity: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  submitContainer: {
-    paddingHorizontal: SIZES.padding,
-    marginTop: 8,
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#FF3B30',
-    marginTop: 8,
-  },
+  chipText: { fontSize: 14, fontWeight: '600', color: COLORS.text },
+  chipTextActive: { color: '#FFF' },
 });
