@@ -28,9 +28,9 @@ export default function AIAssistant({ listenKey }: Props) {
   const agentRef = useRef<VoiceAgent | null>(null);
 
   /**
-   * Pedido de receita ("quero fazer brigadeiro"): avisa que vai procurar enquanto busca e abre a
-   * receita cadastrada no modo guiado, que a lê como está escrita. Pedido ambíguo recebe as opções
-   * do livro de receitas; a IA nunca inventa uma receita.
+   * Pedido de receita ("quero fazer brigadeiro"): abre a receita cadastrada no modo guiado, que a
+   * lê como está escrita. Pedido ambíguo recebe as opções do livro de receitas; a IA nunca inventa
+   * uma receita.
    */
   const onCommand = useCallback(
     async (text: string) => {
@@ -40,12 +40,7 @@ export default function AIAssistant({ listenKey }: Props) {
       // Perguntas sem pedido explícito ("qual o segredo do hambúrguer?") vão para a IA.
       if (!explicit && text.trim().endsWith('?')) return false;
 
-      // Pedido explícito: a vinheta "vou procurar" toca antes de qualquer resposta (só falada, fora
-      // do chat) enquanto a busca roda; só o nome ("brigadeiro") busca em silêncio.
-      const [search] = await Promise.all([
-        aiAPI.findRecipe(text).catch(() => null),
-        explicit ? agent.speak(PHRASES.searchingRecipe) : undefined,
-      ]);
+      const search = await aiAPI.findRecipe(text).catch(() => null);
       const match = search?.match;
       if (!match && !explicit) return false;
       if (!match) {
@@ -61,7 +56,7 @@ export default function AIAssistant({ listenKey }: Props) {
     [router],
   );
 
-  const agent = useVoiceAgent({ onCommand });
+  const agent = useVoiceAgent({ onCommand, heardPhrase: PHRASES.searchingRecipe, retryOnMiss: true });
   agentRef.current = agent;
   const [input, setInput] = useState('');
   const scroll = useRef<ScrollView>(null);

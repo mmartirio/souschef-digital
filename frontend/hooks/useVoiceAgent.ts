@@ -10,18 +10,23 @@ export type AgentStatus = 'idle' | 'listening' | 'thinking' | 'speaking';
 
 const RETRY_DELAY_MS = 1000; // espera antes de voltar a ouvir após um erro momentâneo
 const ECHO_GUARD_MS = 500; // pausa entre falar e ouvir, para o microfone não captar a própria voz
+const MAX_MISSES = 3; // tentativas seguidas sem entender antes de parar de ouvir
 
 interface Options {
   recipeId?: number;
   /** Intercepta comandos (ex.: "próximo", pedido de receita). Retorne true se tratou o texto. */
   onCommand?: (text: string) => boolean | Promise<boolean>;
+  /** Dita (com a voz escolhida) assim que a fala do usuário é captada, enquanto ela é transcrita. */
+  heardPhrase?: string;
+  /** Sem fala ou sem entender: avisa ("não entendi") e volta a ouvir, até MAX_MISSES vezes seguidas. */
+  retryOnMiss?: boolean;
 }
 
 /**
  * Agente de conversação com a voz escolhida. Fala e texto digitado seguem o mesmo caminho:
  * comandos → despedida → IA. Em modo contínuo, volta a ouvir após cada resposta.
  */
-export function useVoiceAgent({ recipeId, onCommand }: Options = {}) {
+export function useVoiceAgent({ recipeId, onCommand, heardPhrase, retryOnMiss }: Options = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<AgentStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -95,20 +100,30 @@ export function useVoiceAgent({ recipeId, onCommand }: Options = {}) {
     [onCommand, reply, ask],
   );
 
-  /** Uma rodada de voz: ouve, transcreve e trata. Silêncio não gera resposta. */
+  /** Uma rodada de voz: ouve, transcreve e trata. Retorna false se nada foi dito ou entendido. */
   const listenOnce = useCallback(
-    async (continuous: boolean) => {
+    async (continuous: boolean): Promise<boolean> => {
       await new Promise((resolve) => setTimeout(resolve, ECHO_GUARD_MS));
       setStatus('listening');
       const uri = await recorder.listen();
-      if (!uri) return;
+      if (!uri) return false;
 
       setStatus('thinking');
-      const text = (await aiAPI.transcribe(uri)).trim();
-      if (!text || isEcho(text)) return; // silêncio ou eco da própria voz
+      const heard = heardPhrase ? say(heardPhrase) : undefined;
+      let text = '';
+      try {
+        text = (await aiAPI.transcribe(uri)).trim();
+      } catch {
+        // falha na transcrição conta como "não entendi"
+      } finally {
+        await heard; // a resposta (ou a próxima escuta) só começa depois dessa fala
+      }
+      if (!text) return false;
+      if (isEcho(text)) return true; // eco da própria voz: ignora em silêncio
       await handle(text, { speakReply: true, continuous });
+      return true;
     },
-    [recorder, handle],
+    [recorder, handle, heardPhrase, say],
   );
 
   /**
@@ -121,10 +136,20 @@ export function useVoiceAgent({ recipeId, onCommand }: Options = {}) {
       setError(null);
       const id = ++conversation.current;
       const active = () => conversation.current === id && mounted.current;
+      let misses = 0;
       try {
         do {
           try {
-            await listenOnce(continuous);
+            const understood = await listenOnce(continuous);
+            misses = understood ? 0 : misses + 1;
+            if (!understood && retryOnMiss && active()) {
+              setStatus('speaking');
+              if (misses >= MAX_MISSES) {
+                await say(PHRASES.tooManyMisses);
+                break;
+              }
+              await say(PHRASES.notUnderstood);
+            }
           } catch (e) {
             if (!continuous || e instanceof MicrophonePermissionError) throw e;
             await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
@@ -139,7 +164,7 @@ export function useVoiceAgent({ recipeId, onCommand }: Options = {}) {
         if (mounted.current && !startedAnother) setStatus('idle');
       }
     },
-    [listenOnce],
+    [listenOnce, retryOnMiss, say],
   );
 
   const cancel = useCallback(() => {

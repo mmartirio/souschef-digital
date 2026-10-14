@@ -2,20 +2,29 @@ import { createContext, createElement, ReactNode, useContext, useEffect, useStat
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_KEY = 'voice_id';
+const SYSTEM_VOICE = 'system'; // valor salvo para a voz padrão do aparelho (null)
 
 export interface VoiceOption {
   label: string;
-  /** Identificador da voz do sistema; null = voz padrão do aparelho. */
+  /** Voz do Google sem o sufixo -network/-local (ver resolveVoice); null = voz padrão do aparelho. */
   voiceId: string | null;
 }
 
 /** Vozes oferecidas ao usuário. */
 export const VOICE_OPTIONS: VoiceOption[] = [
-  { label: 'Feminina (padrão do sistema)', voiceId: null },
-  { label: 'Masculina', voiceId: 'pt-br-x-ptd-local' },
+  { label: 'Feminina', voiceId: 'pt-br-x-afs' },
+  { label: 'Masculina', voiceId: 'pt-br-x-ptd' },
+  { label: 'Padrão do sistema', voiceId: null },
 ];
 
-const isOffered = (id: string | null) => VOICE_OPTIONS.some((option) => option.voiceId === id);
+const DEFAULT_VOICE = VOICE_OPTIONS[0].voiceId;
+
+/** Voz salva → opção oferecida (versões antigas guardavam o id com sufixo, ex.: "pt-br-x-ptd-local"). */
+const toOffered = (id: string) => {
+  if (id === SYSTEM_VOICE) return null;
+  const voice = id.replace(/-(network|local)$/, '');
+  return VOICE_OPTIONS.some((option) => option.voiceId === voice) ? voice : DEFAULT_VOICE;
+};
 
 interface VoiceSettingsState {
   /** Identificador da voz do sistema; null = voz padrão. */
@@ -26,18 +35,18 @@ interface VoiceSettingsState {
 const VoiceSettingsContext = createContext<VoiceSettingsState | null>(null);
 
 export function VoiceSettingsProvider({ children }: { children: ReactNode }) {
-  const [voiceId, setVoiceId] = useState<string | null>(null);
+  const [voiceId, setVoiceId] = useState<string | null>(DEFAULT_VOICE);
 
   useEffect(() => {
     // Voz salva que não é mais oferecida volta para a padrão.
     AsyncStorage.getItem(STORAGE_KEY)
-      .then((id) => setVoiceId(isOffered(id) ? id : null))
+      .then((id) => id !== null && setVoiceId(toOffered(id)))
       .catch(() => undefined);
   }, []);
 
   const setVoice = (id: string | null) => {
     setVoiceId(id);
-    void (id ? AsyncStorage.setItem(STORAGE_KEY, id) : AsyncStorage.removeItem(STORAGE_KEY));
+    void AsyncStorage.setItem(STORAGE_KEY, id ?? SYSTEM_VOICE);
   };
 
   return createElement(VoiceSettingsContext.Provider, { value: { voiceId, setVoice } }, children);

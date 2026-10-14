@@ -8,23 +8,42 @@ const plain = (text: string) =>
   text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
 /**
- * O microfone captou a própria voz do assistente? Trechos de 3+ palavras que ele acabou de falar
- * são eco; comandos curtos do usuário ("pronto", "repete") nunca são descartados.
+ * O microfone captou a própria voz do assistente? Eco é o fim da última fala ou boa parte dela.
+ * Comandos curtos ("pronto", "repete") e trechos do meio da fala (ex.: o nome de uma das receitas
+ * oferecidas) são respostas do usuário e nunca são descartados.
  */
 export function isEcho(heard: string): boolean {
   const words = plain(heard);
-  return words.split(' ').length >= 3 && lastSpoken.includes(words);
+  const count = words.split(' ').length;
+  if (count < 3 || !lastSpoken.includes(words)) return false;
+  return lastSpoken.endsWith(words) || count >= lastSpoken.split(' ').length * 0.6;
+}
+
+let installedIds: Promise<Set<string>> | null = null;
+const installed = () =>
+  (installedIds ??= listVoices()
+    .then((voices) => new Set(voices.map((voice) => voice.identifier)))
+    .catch(() => new Set<string>()));
+
+/**
+ * Variante instalada de uma voz do Google ("pt-br-x-ptd"): a de rede é neural e bem mais natural
+ * (sem internet, o próprio Android cai na local); sem nenhuma, usa a voz padrão do aparelho.
+ */
+export async function resolveVoice(voice: string | null): Promise<string | null> {
+  if (!voice) return null;
+  const ids = await installed();
+  return [`${voice}-network`, `${voice}-local`].find((id) => ids.has(id)) ?? null;
 }
 
 /** Fala o texto em pt-BR no padrão de leitura do app (com a voz escolhida) e resolve quando termina. */
-export function speak(text: string, voiceId: string | null = null): Promise<void> {
+export async function speak(text: string, voice: string | null = null): Promise<void> {
   const spoken = toSpeech(text);
   lastSpoken = plain(spoken);
+  const voiceId = await resolveVoice(voice);
   return new Promise((resolve) => {
     Speech.speak(spoken, {
       language: VOICE_LANGUAGE,
       voice: voiceId ?? undefined,
-      rate: 0.95,
       onDone: () => resolve(),
       onStopped: () => resolve(),
       onError: () => resolve(),

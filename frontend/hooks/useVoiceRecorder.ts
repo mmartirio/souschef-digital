@@ -11,7 +11,7 @@ const OPTIONS = { ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true };
 const SPEECH_DB = -45; // acima disso consideramos voz
 const SILENCE_MS = 1500; // silêncio após falar encerra a gravação
 const NO_SPEECH_MS = 7000; // desiste se ninguém falar
-const MAX_MS = 20000;
+const MAX_MS = 15000; // gravação mais longa permitida
 const SAFETY_MS = MAX_MS + 2000; // encerra mesmo se o status do gravador parar de chegar
 
 /** Microfone negado: a conversa não tem como continuar. */

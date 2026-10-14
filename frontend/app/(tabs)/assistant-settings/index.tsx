@@ -21,7 +21,8 @@ export default function AssistantSettingsScreen() {
   }, []);
 
   // A voz padrão (null) sempre existe; as demais dependem do que o celular tem instalado.
-  const isAvailable = (id: string | null) => id === null || installed === null || installed.has(id);
+  const isAvailable = (id: string | null) =>
+    id === null || installed === null || installed.has(`${id}-network`) || installed.has(`${id}-local`);
 
   const preview = (id: string | null) => {
     void stopSpeaking();

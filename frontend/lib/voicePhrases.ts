@@ -10,6 +10,8 @@ export const PHRASES = {
   sample: 'Olá! Eu sou o SousChef, seu assistente de cozinha.',
   goodbyeReply: 'Até mais! Bom apetite.',
   chatError: 'Não consegui falar com o assistente agora.',
+  notUnderstood: 'Eu não entendi. Vamos tentar novamente.',
+  tooManyMisses: 'Vou parar de ouvir por enquanto. Toque no microfone quando quiser falar.',
   guidedIntro: 'Modo guiado. Vou pausar a cada etapa e esperar você. Se tiver dúvida, é só perguntar.',
   /** Anuncia o componente quando a receita tem mais de um preparo (ex.: massa, recheio). */
   component: (title: string) => `Vamos preparar: ${title}.`,
